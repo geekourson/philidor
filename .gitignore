@@ -1,0 +1,33 @@
+# Données, poids et journaux : volumineux et régénérables, jamais versionnés.
+data/*
+!data/vocab.json
+checkpoints/
+logs/
+figures/
+# assets/ contient les visuels du README, eux sont versionnés.
+hf/
+
+# Le jeton Lichess ne doit jamais être commité.
+# Copier lichess_bot_config.example.yml vers config.yml et le remplir.
+config.yml
+lichess_bot_config.yml
+lichess-bot/
+
+# Corpus bruts
+*.pgn
+*.pgn.zst
+*.bin
+*.pt
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Système
+.DS_Store
+.idea/
+.vscode/

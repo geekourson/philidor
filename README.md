@@ -1,0 +1,547 @@
+# Philidor
+
+**English** · [Français](#philidor-fr)
+
+A language model trained from scratch that plays chess **without ever being told the rules**.
+
+It never sees a board. It receives a sequence of moves in UCI notation, `e2e4 e7e5 g1f3`, and its only task is to predict the next one. Everything it "knows" about the game, it inferred from 800 million moves played by humans.
+
+```
+97.86 %   of the moves it proposes are legal, in free generation, with no constraint
+51 M      parameters, trained in 2 hours on a single RTX 3090
+1719      Lichess rapid rating, against real players
+98/100    wins against a generalist model 681 times larger
+```
+
+**[Read the full article](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend)** (in French): the story of the project, the choices, the measurements, and the mistakes, including one that nearly cost fifteen hours of compute.
+
+> Code comments are in French. The English README below covers everything you need to reproduce the experiment.
+
+---
+
+## One game, all the way to checkmate
+
+The endgame of a rated rapid game on Lichess, won against an opponent rated 1965, that is 241 points above. The model plays White. It pushes a pawn to promotion and mates with two queens, on move 86.
+
+![The last twenty moves of a win by checkmate against a 1965-rated opponent](assets/lichess-win.gif)
+
+Not a single illegal move across the 171 half-moves of the game, and an endgame played to the finish by a model that never sees the board and decides in a few milliseconds, without searching a single variation.
+
+Full replayable game: [lichess.org/delDiQ5h](https://lichess.org/delDiQ5h)
+
+---
+
+## What this repository contains
+
+Everything needed to redo the experiment end to end: build the vocabulary, filter a Lichess dump, train the model, evaluate it, pit it against Stockfish, and put it online as a bot.
+
+No exotic dependencies. Plain PyTorch, no training framework: every line of the loop is readable.
+
+## The trained models
+
+| Model | Parameters | Data | Duration | Legal moves |
+|---|---|---|---|---|
+| [philidor-51m](https://huggingface.co/billygeekourson/philidor-51m) | 51 M | 800 M tokens | 2 h | 97.86 % |
+| [philidor-142m](https://huggingface.co/billygeekourson/philidor-142m) | 142 M | 3.2 G tokens | 18 h | 98.85 % |
+
+The second one plays online: [lichess.org/@/philidor-142M](https://lichess.org/@/philidor-142M). Feel free to challenge it.
+
+## Try the model in three lines
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained("billygeekourson/philidor-51m")
+model = AutoModelForCausalLM.from_pretrained("billygeekourson/philidor-51m")
+print(tok.decode(model.generate(**tok("e2e4 e7e5", return_tensors="pt"))[0]))
+```
+
+The model loads as a standard `LlamaForCausalLM`: RMSNorm, RoPE, SwiGLU and pre-norm *are* the Llama architecture.
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/geekourson/philidor.git && cd philidor
+python3 -m venv venv && source venv/bin/activate
+
+pip install torch --index-url https://download.pytorch.org/whl/cu126
+pip install -r requirements.txt
+```
+
+Reference hardware: RTX 3090 (24 GB), 32 GB of RAM, 6 cores. Plan for **150 GB of disk space** for one month of Lichess data.
+
+> **First, check that your GPU is not power-capped.** This is the first trap of the project: the reference card was running at 170 W instead of 420, that is 40 % of its power, with nothing to signal it.
+> ```bash
+> nvidia-smi --query-gpu=name,power.limit,power.default_limit --format=csv
+> python bench_gpu.py    # measures the real TFLOPS
+> ```
+
+## Reproducing the experiment
+
+### 1. The vocabulary
+
+One move is one token, indivisible. The vocabulary is the finite set of the 1968 geometrically possible UCI moves, plus `<pad>`, `<bos>` and `<eos>`.
+
+It does not depend on any data, only on the rules of the game: `data/vocab.json` is provided as is. To regenerate it identically:
+
+```bash
+python vocab.py data/vocab.json          # 1971 tokens
+```
+
+### 2. The data
+
+```bash
+cd data && wget -c https://database.lichess.org/standard/lichess_db_standard_rated_2026-07.pgn.zst && cd ..
+
+python prepare_data.py benchmark --games 50000            # 2 min, do not skip
+python prepare_data.py parse --workers 10 --target-tokens 800e6 \
+  --out data/games_uci.txt --stats logs/phase1_parse_stats.json
+python prepare_data.py encode --games data/games_uci.txt \
+  --vocab data/vocab.json --outdir data
+```
+
+Out of 89 million games read, 11 million are kept: both players between 1800 and 2600 Elo, bullet excluded, normal termination, between 20 and 300 half-moves.
+
+The train/validation split is done **per game, never per token**. Cutting the stream at token level puts a single game across both sets, which improves validation loss with no symptom whatsoever.
+
+### 3. The guardrail, before committing hours of compute
+
+```bash
+python train.py --overfit --overfit-games 100 --overfit-steps 1200 --batch-size 64
+```
+
+The loss must fall below 0.05. Measured: from 7.13 to **0.035 in 270 steps**, that is 2 min 08. If it does not, there is a bug, and the full run will only reproduce it overnight.
+
+### 4. Training
+
+```bash
+python train.py --run-name run1 --device cuda:1 \
+  --batch-size 192 --max-steps 16300 --warmup-steps 500 --snapshot-every 1000
+```
+
+Exactly two hours. 801 M tokens, 120,000 tokens/s, 64 % MFU.
+
+`--snapshot-every` freezes a snapshot every 1000 steps. Without it, there is no way to reconstruct afterwards **in which order** the model learns the rules, which is the most interesting result of the project.
+
+In parallel, on a second card:
+
+```bash
+python eval_watcher.py --run-name run1 --device cuda:0 --prefix eval
+```
+
+### 5. Evaluating
+
+```bash
+python evaluate.py --ckpt checkpoints/run1_best.pt --device cuda:1 \
+  --n-legal 20000 --n-agreement 20000 --n-per-rule 500 --n-full-games 500 \
+  --out logs/eval_final.json
+```
+
+> **Temperature is a parameter of the measurement, not of the model.** Comparing two models evaluated at different temperatures produces an artificial gap. One temperature per metric, fixed in advance: 1.0 for legality (the harshest test), 0 for matches.
+
+### 6. Playing strength
+
+```bash
+python elo_match.py --ckpt checkpoints/run1_best.pt --device cuda:1 \
+  --stockfish $(which stockfish) --levels 0 1 2 3 --games 200 --movetime-ms 50
+
+python elo_match.py --ckpt checkpoints/run1_best.pt --device cuda:1 \
+  --skip-stockfish --ladder --ladder-run run1 --ladder-games 60
+```
+
+### 7. Using the model
+
+```bash
+python play.py --ckpt checkpoints/run1_best.pt              # play against it
+python engine.py --ckpt checkpoints/run1_best.pt --selftest # UCI engine
+python convert_to_hf.py --ckpt checkpoints/run1_best.pt --out hf/philidor-51m
+```
+
+---
+
+## Results
+
+### What it inferred on its own
+
+**97.86 %** legal moves in free generation, Wilson interval at 95 % from 97.65 to 98.05 %, over 20,000 positions. No mask: the model may propose any of the 1971 tokens in its vocabulary.
+
+### The order in which the rules are learned
+
+| Rule | Nature for a network | 49 M tokens | 786 M tokens |
+|---|---|---|---|
+| Castling | fixed pattern, 4 constant strings | 98.7 % | 100 % |
+| En passant | rare but distinctive pattern | 98.0 % | 100 % |
+| Promotion | pattern with a condition attached | 88.0 % | 99.3 % |
+| Getting out of check | no pattern, state to reconstruct | 76.7 % | 96.0 % |
+
+Castling and en passant, the two rules explained **last** to a beginner, are acquired immediately. Not staying in check, the most fundamental constraint of the game, is the only one that requires a genuine learning trajectory.
+
+The reason has nothing to do with chess: what is frequent and canonical in the data is learned almost for free, what requires reconstructing a latent state is paid for in data.
+
+### Against Stockfish
+
+| Opponent | Score | Elo gap |
+|---|---|---|
+| Stockfish level 0 | 56.0 % | +42 ± 45 |
+| Stockfish level 1 | 37.8 % | −87 ± 44 |
+| Stockfish level 2 | 26.2 % | −180 ± 48 |
+| Stockfish level 3 | 18.0 % | −263 ± 52 |
+
+These gaps are **relative** to a capped Stockfish on this machine. Converting them to Lichess Elo would require an anchor point not verified here, so `METRICS.json` carries `"elo_absolu": "non mesuré"`.
+
+### Against a 35-billion-parameter generalist
+
+Same question asked to both, no list of legal moves provided, a single attempt for our model against **30 attempts** granted to the opponent:
+
+| Model | Size | Legal moves | Over 100 games |
+|---|---|---|---|
+| Philidor | 51 M | 97.86 % | 98 W / 2 D / 0 L |
+| Philidor | 142 M | 98.85 % | 99 W / 1 D / 0 L |
+| Qwen3.6 | 35 B | 36.18 % | 0 win |
+
+Zero unreadable answers from Qwen: it understands the instruction and always replies in the right format. **It does not get the task wrong, it gets the move wrong.** It never built a board internally.
+
+All raw measurements, with their protocols and confidence intervals, are in [`METRICS.json`](METRICS.json).
+
+---
+
+## The files
+
+### The pipeline
+
+| File | Role |
+|---|---|
+| `bench_gpu.py` | Checks CUDA, measures real bf16 TFLOPS |
+| `vocab.py` | Builds the vocabulary by geometric enumeration |
+| `prepare_data.py` | `benchmark` / `parse` / `encode` |
+| `model.py` | The Transformer: pre-norm, RMSNorm, RoPE, SwiGLU |
+| `train.py` | Training loop, checkpoints, resume, overfit mode |
+| `evaluate.py` | Legality, human agreement, per-rule tests, Wilson intervals |
+| `eval_watcher.py` | Evaluates snapshots during training |
+
+### Playing and measuring
+
+| File | Role |
+|---|---|
+| `engine.py` | UCI engine with legality mask |
+| `play.py` | Play against the model from the keyboard |
+| `elo_match.py` | Stockfish matches, snapshot ladder, model duels |
+| `qwen_match.py` | Duel against a generalist LLM through its API |
+| `convert_to_hf.py` | Hugging Face export, numerically verified before writing |
+
+### Serving online
+
+| File | Role |
+|---|---|
+| `infer_server.py` | One model in memory, many simultaneous games |
+| `engine_client.py` | Lightweight client, one per game |
+| `run_lichess_bot.sh` | Runs the bot with a watchdog that only restarts on a real crash |
+
+### Plots
+
+`plots.py` for training curves, `plots_article.py` for one-off visuals, `game_gif.py` to animate a game.
+
+---
+
+## Traps encountered
+
+| Trap | Symptom | Fix |
+|---|---|---|
+| Power-capped GPU | throughput 2 to 3× below spec sheet | `nvidia-smi -pl` |
+| `Pool.imap` on a generator | OOM after a few minutes | process in fixed-size windows |
+| Train/val split per token | validation loss too good, no symptom | split per game |
+| Abnormally low loss | 5.97 instead of 7.59 at init | look for a data leak |
+| Different temperatures between two measurements | artificial gap attributed to the model | one temperature per metric |
+| Rapid bot restarts | `429` lasting over an hour | slow watchdog, on real crashes only |
+
+Each one is told in detail in [the article](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend).
+
+---
+
+## License
+
+Code under MIT license, see [LICENSE](LICENSE).
+
+Training data comes from the [Lichess archives](https://database.lichess.org/), released under CC0.
+
+## Author
+
+Billy Girboux, [billygirboux.fr](https://www.billygirboux.fr) · [LinkedIn](https://www.linkedin.com/in/billy-girboux)
+
+<br>
+
+---
+
+<a name="philidor-fr"></a>
+
+# Philidor (Français)
+
+[English](#philidor) · **Français**
+
+Un modèle de langage entraîné de zéro qui joue aux échecs **sans qu'on lui ait jamais donné les règles**.
+
+Il ne voit pas d'échiquier. Il reçoit une suite de coups en notation UCI, `e2e4 e7e5 g1f3`, et sa seule tâche est de prédire le suivant. Tout ce qu'il « sait » du jeu, il l'a déduit de 800 millions de coups joués par des humains.
+
+```
+97,86 %   des coups qu'il propose sont légaux, en génération libre, sans aucune contrainte
+51 M      paramètres, entraînés en 2 heures sur une seule RTX 3090
+1719      classement Lichess en rapide, contre de vrais joueurs
+98/100    victoires contre un modèle généraliste 681 fois plus gros
+```
+
+**[Lire l'article complet](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend)**, le récit du projet, les choix, les mesures et les erreurs, dont une qui a failli coûter quinze heures de calcul.
+
+---
+
+## Une partie, jusqu'au mat
+
+La finale d'une partie classée en rapide sur Lichess, gagnée contre un adversaire classé 1965, soit 241 points au-dessus. Le modèle a les Blancs. Il pousse un pion jusqu'à la promotion et mate avec deux dames, au 86e coup.
+
+![Les vingt derniers coups d'une victoire par échec et mat contre un adversaire classé 1965](assets/lichess-win.gif)
+
+Aucun coup illégal sur les 171 demi-coups de la partie, et une finale menée jusqu'au bout par un modèle qui ne voit pas l'échiquier et décide en quelques millisecondes, sans explorer la moindre variante.
+
+Partie complète et rejouable : [lichess.org/delDiQ5h](https://lichess.org/delDiQ5h)
+
+---
+
+## Ce que ce dépôt contient
+
+Tout ce qui est nécessaire pour refaire l'expérience de bout en bout : construire le vocabulaire, filtrer un dump Lichess, entraîner le modèle, l'évaluer, le faire jouer contre Stockfish, et le mettre en ligne comme bot.
+
+Aucune dépendance exotique. PyTorch pur, sans framework d'entraînement : chaque ligne de la boucle est lisible.
+
+## Les modèles entraînés
+
+| Modèle | Paramètres | Données | Durée | Coups légaux |
+|---|---|---|---|---|
+| [philidor-51m](https://huggingface.co/billygeekourson/philidor-51m) | 51 M | 800 M tokens | 2 h | 97,86 % |
+| [philidor-142m](https://huggingface.co/billygeekourson/philidor-142m) | 142 M | 3,2 G tokens | 18 h | 98,85 % |
+
+Le second joue en ligne : [lichess.org/@/philidor-142M](https://lichess.org/@/philidor-142M). Vous pouvez le défier.
+
+## Essayer le modèle en trois lignes
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained("billygeekourson/philidor-51m")
+model = AutoModelForCausalLM.from_pretrained("billygeekourson/philidor-51m")
+print(tok.decode(model.generate(**tok("e2e4 e7e5", return_tensors="pt"))[0]))
+```
+
+Le modèle se charge comme un `LlamaForCausalLM` standard : RMSNorm, RoPE, SwiGLU et pre-norm *sont* l'architecture de Llama.
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/geekourson/philidor.git && cd philidor
+python3 -m venv venv && source venv/bin/activate
+
+pip install torch --index-url https://download.pytorch.org/whl/cu126
+pip install -r requirements.txt
+```
+
+Matériel de référence : RTX 3090 (24 Go), 32 Go de RAM, 6 cœurs. Prévoir **150 Go d'espace disque** pour un mois de données Lichess.
+
+> **Vérifiez d'abord que votre GPU n'est pas bridé.** C'est le premier piège du projet : la carte de référence tournait à 170 W au lieu de 420, soit 40 % de sa puissance, sans que rien ne le signale.
+> ```bash
+> nvidia-smi --query-gpu=name,power.limit,power.default_limit --format=csv
+> python bench_gpu.py    # mesure les TFLOPS réels
+> ```
+
+## Reproduire l'expérience
+
+### 1. Le vocabulaire
+
+Un coup vaut un token, indivisible. Le vocabulaire est l'ensemble fini des 1968 coups UCI géométriquement possibles, plus `<pad>`, `<bos>` et `<eos>`.
+
+Il ne dépend d'aucune donnée, seulement des règles du jeu : `data/vocab.json` est fourni tel quel. Pour le régénérer à l'identique :
+
+```bash
+python vocab.py data/vocab.json          # 1971 tokens
+```
+
+### 2. Les données
+
+```bash
+cd data && wget -c https://database.lichess.org/standard/lichess_db_standard_rated_2026-07.pgn.zst && cd ..
+
+python prepare_data.py benchmark --games 50000            # 2 min, ne pas sauter
+python prepare_data.py parse --workers 10 --target-tokens 800e6 \
+  --out data/games_uci.txt --stats logs/phase1_parse_stats.json
+python prepare_data.py encode --games data/games_uci.txt \
+  --vocab data/vocab.json --outdir data
+```
+
+Sur 89 millions de parties lues, 11 millions sont conservées : les deux joueurs entre 1800 et 2600 Elo, bullet exclu, terminaison normale, entre 20 et 300 demi-coups.
+
+Le découpage entraînement/validation se fait **par partie, jamais par token**. Couper le flux au token près met une même partie à cheval sur les deux jeux, ce qui améliore la loss de validation sans qu'aucun symptôme ne l'annonce.
+
+### 3. Le garde-fou, avant d'engager des heures de calcul
+
+```bash
+python train.py --overfit --overfit-games 100 --overfit-steps 1200 --batch-size 64
+```
+
+La loss doit tomber sous 0,05. Mesuré : de 7,13 à **0,035 en 270 steps**, soit 2 min 08. Si elle n'y tombe pas, il y a un bug, et le run complet ne fera que le reproduire pendant une nuit.
+
+### 4. L'entraînement
+
+```bash
+python train.py --run-name run1 --device cuda:1 \
+  --batch-size 192 --max-steps 16300 --warmup-steps 500 --snapshot-every 1000
+```
+
+Deux heures exactement. 801 M tokens, 120 000 tokens/s, MFU de 64 %.
+
+`--snapshot-every` fige un instantané tous les 1000 steps. Sans lui, impossible de reconstituer après coup **dans quel ordre** le modèle apprend les règles, qui est le résultat le plus intéressant du projet.
+
+En parallèle, sur une seconde carte :
+
+```bash
+python eval_watcher.py --run-name run1 --device cuda:0 --prefix eval
+```
+
+### 5. Évaluer
+
+```bash
+python evaluate.py --ckpt checkpoints/run1_best.pt --device cuda:1 \
+  --n-legal 20000 --n-agreement 20000 --n-per-rule 500 --n-full-games 500 \
+  --out logs/eval_final.json
+```
+
+> **La température est un paramètre de la mesure, pas du modèle.** Comparer deux modèles évalués à des températures différentes produit un écart artificiel. Une température par métrique, fixée d'avance : 1,0 pour la légalité (le test le plus sévère), 0 pour les matchs.
+
+### 6. Force de jeu
+
+```bash
+python elo_match.py --ckpt checkpoints/run1_best.pt --device cuda:1 \
+  --stockfish $(which stockfish) --levels 0 1 2 3 --games 200 --movetime-ms 50
+
+python elo_match.py --ckpt checkpoints/run1_best.pt --device cuda:1 \
+  --skip-stockfish --ladder --ladder-run run1 --ladder-games 60
+```
+
+### 7. Utiliser le modèle
+
+```bash
+python play.py --ckpt checkpoints/run1_best.pt          # jouer contre lui
+python engine.py --ckpt checkpoints/run1_best.pt --selftest   # moteur UCI
+python convert_to_hf.py --ckpt checkpoints/run1_best.pt --out hf/philidor-51m
+```
+
+---
+
+## Résultats
+
+### Ce qu'il a déduit seul
+
+**97,86 %** de coups légaux en génération libre, intervalle de Wilson à 95 % de 97,65 à 98,05 %, sur 20 000 positions. Sans masque : le modèle peut proposer n'importe lequel des 1971 tokens de son vocabulaire.
+
+### L'ordre d'apprentissage des règles
+
+| Règle | Nature pour un réseau | 49 M tokens | 786 M tokens |
+|---|---|---|---|
+| Roque | motif figé, 4 chaînes fixes | 98,7 % | 100 % |
+| Prise en passant | motif rare mais typé | 98,0 % | 100 % |
+| Promotion | motif assorti d'une condition | 88,0 % | 99,3 % |
+| Sortie d'échec | aucun motif, état à reconstruire | 76,7 % | 96,0 % |
+
+Le roque et la prise en passant, les deux règles qu'on explique **en dernier** à un débutant, sont acquises d'emblée. Ne pas rester en échec, la contrainte la plus fondamentale du jeu, est la seule qui demande une véritable trajectoire d'apprentissage.
+
+La raison n'a rien de spécifique aux échecs : ce qui est fréquent et canonique dans les données s'apprend presque gratuitement, ce qui exige de reconstruire un état latent se paie en données.
+
+### Contre Stockfish
+
+| Adversaire | Score | Écart d'Elo |
+|---|---|---|
+| Stockfish niveau 0 | 56,0 % | +42 ± 45 |
+| Stockfish niveau 1 | 37,8 % | −87 ± 44 |
+| Stockfish niveau 2 | 26,2 % | −180 ± 48 |
+| Stockfish niveau 3 | 18,0 % | −263 ± 52 |
+
+Écarts **relatifs** à un Stockfish bridé sur cette machine. Les convertir en Elo Lichess demanderait un point d'ancrage non vérifié ici, donc `METRICS.json` porte `"elo_absolu": "non mesuré"`.
+
+### Contre un généraliste de 35 milliards de paramètres
+
+Même question posée aux deux, aucune liste de coups légaux fournie, un seul essai pour notre modèle contre **30 tentatives** accordées à l'adversaire :
+
+| Modèle | Taille | Coups légaux | Sur 100 parties |
+|---|---|---|---|
+| Philidor | 51 M | 97,86 % | 98 v. / 2 n. / 0 d. |
+| Philidor | 142 M | 98,85 % | 99 v. / 1 n. / 0 d. |
+| Qwen3.6 | 35 B | 36,18 % | 0 victoire |
+
+Zéro réponse illisible côté Qwen : il comprend la consigne et répond toujours dans le bon format. **Il ne se trompe pas de tâche, il se trompe de coup.** Il n'a jamais construit d'échiquier en interne.
+
+Toutes les mesures brutes, avec leurs protocoles et leurs intervalles de confiance, sont dans [`METRICS.json`](METRICS.json).
+
+---
+
+## Les fichiers
+
+### Le pipeline
+
+| Fichier | Rôle |
+|---|---|
+| `bench_gpu.py` | Vérifie CUDA, mesure les TFLOPS bf16 réels |
+| `vocab.py` | Construit le vocabulaire par énumération géométrique |
+| `prepare_data.py` | `benchmark` / `parse` / `encode` |
+| `model.py` | Le Transformer : pre-norm, RMSNorm, RoPE, SwiGLU |
+| `train.py` | Boucle d'entraînement, checkpoints, reprise, mode surapprentissage |
+| `evaluate.py` | Légalité, accord humain, tests par règle, intervalles de Wilson |
+| `eval_watcher.py` | Évalue les instantanés pendant l'entraînement |
+
+### Jouer et mesurer
+
+| Fichier | Rôle |
+|---|---|
+| `engine.py` | Moteur UCI avec masque de légalité |
+| `play.py` | Jouer contre le modèle au clavier |
+| `elo_match.py` | Matchs Stockfish, échelle d'instantanés, duels entre modèles |
+| `qwen_match.py` | Duel contre un LLM généraliste via son API |
+| `convert_to_hf.py` | Export Hugging Face, vérifié numériquement avant écriture |
+
+### Servir en ligne
+
+| Fichier | Rôle |
+|---|---|
+| `infer_server.py` | Un seul modèle en mémoire, plusieurs parties simultanées |
+| `engine_client.py` | Client léger, un par partie |
+| `run_lichess_bot.sh` | Lance le bot avec un watchdog qui ne relance que sur un vrai crash |
+
+### Graphiques
+
+`plots.py` pour les courbes de progression, `plots_article.py` pour les visuels ponctuels, `game_gif.py` pour animer une partie.
+
+---
+
+## Les pièges rencontrés
+
+| Piège | Symptôme | Correction |
+|---|---|---|
+| GPU bridé | débit 2 à 3× sous la fiche technique | `nvidia-smi -pl` |
+| `Pool.imap` sur un générateur | OOM après quelques minutes | traiter par fenêtres de taille fixe |
+| Découpage train/val par token | loss de validation trop belle, sans symptôme | découper par partie |
+| Loss anormalement basse | 5,97 au lieu de 7,59 à l'initialisation | chercher une fuite de données |
+| Températures différentes entre deux mesures | écart artificiel attribué au modèle | une température par métrique |
+| Redémarrages rapprochés du bot | `429` qui dure plus d'une heure | watchdog lent, sur crash réel seulement |
+
+Chacun est raconté en détail dans [l'article](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend).
+
+---
+
+## Licence
+
+Code sous licence MIT, voir [LICENSE](LICENSE).
+
+Les données d'entraînement proviennent des [archives Lichess](https://database.lichess.org/), publiées en CC0.
+
+## Auteur
+
+Billy Girboux, [billygirboux.fr](https://www.billygirboux.fr) · [LinkedIn](https://www.linkedin.com/in/billy-girboux)

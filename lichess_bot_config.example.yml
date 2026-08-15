@@ -1,0 +1,104 @@
+# Configuration lichess-bot pour ce projet.
+#
+# À copier dans lichess-bot/config.yml après avoir cloné le dépôt.
+# DEUX champs à remplir : le jeton personnel Lichess et le
+# checkpoint. Tout le reste est déjà réglé pour ce modèle.
+#
+# Ne jamais versionner le fichier une fois le token dedans.
+
+token: "COLLE_TON_TOKEN_ICI"        # jeton personnel Lichess, préfixé "lip"
+
+url: "https://lichess.org/"
+
+engine:
+  dir: "/chemin/vers/philidor"
+  # Le moteur n'est PAS engine.py (qui charge le modèle) mais engine_client.py :
+  # un client UCI léger qui relaie les coups vers infer_server.py, lequel détient
+  # l'unique copie du modèle. Un modèle sans état n'a pas besoin d'une copie par
+  # partie : 50 clients légers + 1 serveur, au lieu de 50 modèles. Voir
+  # INFERENCE_SERVER.md. Le serveur est démarré par run_lichess_bot.sh.
+  name: "engine_client.py"
+  working_dir: "/chemin/vers/philidor"
+  protocol: "uci"
+  ponder: false
+
+  interpreter: "/chemin/vers/donnees/venv/bin/python"
+  # Aucun engine_options : le client ne charge rien, il lit la socket via la
+  # variable d'environnement INFER_SOCKET (défaut = logs/infer.sock). Tout ce qui
+  # concerne le modèle (ckpt, device, température) est passé au SERVEUR par le
+  # watchdog, pas au client.
+
+  # Pas de uci_options : le client n'annonce aucune option, et python-chess
+  # refuse un setoption pour une option non déclarée.
+  polyglot:
+    enabled: false      # pas de livre d'ouvertures : on veut voir ce que le
+                        # modèle a appris, pas ce qu'un livre lui souffle
+
+challenge:
+  concurrency: 50       # jusqu'à 50 parties simultanées. Possible SANS coût
+                        # mémoire grâce à l'architecture serveur/clients (un seul
+                        # modèle chargé, voir INFERENCE_SERVER.md) : chaque partie
+                        # de plus n'est qu'un client léger. Le plafond réel n'est
+                        # pas la machine mais Lichess (limites de défis, nombre de
+                        # bots en ligne) : on n'atteindra en pratique jamais 50.
+
+  # Le modèle ne comprend qu'une suite de coups depuis la position initiale.
+  # On refuse donc tout ce qui n'est pas une partie standard classique.
+  variants:
+    - standard
+
+  time_controls:
+    - bullet            # ajoutés pour se faire des Elo dans chaque catégorie.
+    - blitz             # NB : le bot joue instantanément, donc il ne flague
+    - rapid             # jamais, avantage réel en bullet/blitz qui gonfle ces
+    - classical         # classements. Le RAPID reste le chiffre honnête de la
+    - correspondence    # finale ; bullet/blitz sont des bonus. Le bullet n'était
+                        # pas dans les données d'entraînement (le blitz, si).
+
+  modes:
+    - rated
+    - casual
+
+  min_increment: 0
+  max_increment: 180
+  min_base: 60          # 1 minute minimum (bullet)
+  max_base: 10800
+
+  accept_bot: true      # accepter les défis d'autres bots : c'est ainsi que le
+                        # classement se construit le plus vite
+  only_bot: false
+
+matchmaking:
+  allow_matchmaking: true    # le bot défie lui-même d'autres bots en boucle :
+                             # c'est le moyen le plus rapide de construire son
+                             # classement Lichess (le seul Elo absolu du projet).
+  allow_during_games: true   # le matchmaking entretient plusieurs parties bots
+                             # de front (pas une seule), pour remplir les slots
+  challenge_variant: "standard"   # le modèle ne connaît que le standard
+  challenge_timeout: 1            # cherche un adversaire après 1 min d'inactivité
+  challenge_initial_time:         # cadence de base tirée AU HASARD à chaque défi :
+    - 60                          #   1+0  bullet
+    - 120                         #   2+0  bullet
+    - 180                         #   3+0  blitz
+    - 300                         #   5+0  blitz
+    - 600                         #  10+0  rapid
+  challenge_increment:            # incrément (au hasard) : 0 pour garder des
+    - 0                           # cadences nettes, faciles à classer par catégorie
+  opponent_rating_difference: 400 # adversaires proches ; large tant que le
+                                  # classement du bot est provisoire
+  rating_preference: "none"
+  challenge_mode: "rated"         # parties CLASSÉES : construit un vrai Elo public
+  challenge_filter: "coarse"      # ne pas re-défier un bot qui a déjà refusé
+
+abort_time: 900       # 15 min avant d'annuler une partie sans coup joué. 30 s
+                      # (défaut) est absurde en correspondance : l'adversaire
+                      # humain met souvent plusieurs minutes à jouer son coup.
+fake_think_time: false
+rate_limiting_delay: 0
+move_overhead: 2000
+
+pgn_directory: "/chemin/vers/donnees/logs/lichess_games"
+
+greeting:
+  hello: "Bonjour ! Modèle de langage de 142M entraîné à prédire le coup suivant, sans aucune règle des échecs apprise. Bonne partie !"
+  goodbye: "Merci pour la partie !"

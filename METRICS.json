@@ -1,0 +1,1692 @@
+{
+  "_readme": "Toute valeur ici provient d'une exécution réelle sur la machine. Quand une mesure n'a pas été faite, le champ vaut la chaîne 'non mesuré' et jamais une estimation. Les extrapolations sont dans des champs préfixés 'extrapolation_' et leur méthode de calcul est explicitée.",
+  "projet": "Modèle de langage joueur d'échecs entraîné from scratch",
+  "derniere_mise_a_jour_utc": "2026-08-09T15:10:00Z",
+  "materiel": {
+    "date_releve_utc": "2026-08-04T13:29:10Z",
+    "methode": "nvidia-smi, lscpu, free -h, lsblk, df -h",
+    "gpu": [
+      {
+        "modele": "NVIDIA GeForce RTX 3090",
+        "index_pci_bus_id": 1,
+        "bus_pci": "07:00.0",
+        "vram_totale_mib": 24576,
+        "compute_capability": "8.6",
+        "sm_count": 82,
+        "role": "entraînement"
+      },
+      {
+        "modele": "NVIDIA GeForce RTX 3060",
+        "index_pci_bus_id": 0,
+        "bus_pci": "06:00.0",
+        "vram_totale_mib": 12288,
+        "compute_capability": "8.6",
+        "sm_count": 28,
+        "role": "évaluation en parallèle"
+      }
+    ],
+    "cpu": {
+      "modele": "AMD Ryzen 5 3600 6-Core Processor",
+      "coeurs_physiques": 6,
+      "threads": 12,
+      "frequence_max_mhz": 3950
+    },
+    "ram_totale_gio": 31,
+    "driver_nvidia": "570.211.01",
+    "cuda_driver": "12.8",
+    "stockage": [
+      {
+        "point_montage": "/",
+        "taille_gio": 107,
+        "libre_gio": 13,
+        "usage_projet": "code et documentation uniquement"
+      },
+      {
+        "point_montage": "/mnt/ia-data",
+        "peripherique": "nvme0n1p3",
+        "taille_tio": 1.8,
+        "libre_tio": 1.1,
+        "usage_projet": "données, venv, checkpoints, logs"
+      }
+    ]
+  },
+  "logiciel": {
+    "python": "3.10.12",
+    "torch": "2.13.0+cu126",
+    "torch_cuda": "12.6",
+    "cudnn": 91002,
+    "python_chess": "1.11.2",
+    "zstandard": "0.25.0",
+    "numpy": "2.2.6",
+    "matplotlib": "3.10.9"
+  },
+  "phase0_environnement": {
+    "statut": "terminé",
+    "date_utc": "2026-08-04T13:49:57Z",
+    "cuda_disponible_pytorch": true,
+    "gpu_visibles_pytorch": 2,
+    "note_ordre_gpu": "CUDA_DEVICE_ORDER=PCI_BUS_ID est forcé dans tous les scripts, sans quoi PyTorch trie les cartes par vitesse décroissante et son cuda:0 ne désigne pas la même carte que l'index 0 de nvidia-smi.",
+    "benchmark_matmul_bf16": {
+      "methode": "produit de deux matrices bf16 8192x8192 en boucle, coût 2*n^3 FLOP par produit, synchronisation CUDA avant et après le chronométrage, 5 itérations de chauffe non comptées",
+      "duree_mesure_courte_s": 1.2,
+      "rtx3090_tflops_bf16": 25.7,
+      "rtx3060_tflops_bf16": 27.37
+    },
+    "benchmark_matmul_bf16_charge_soutenue": {
+      "methode": "même produit matriciel maintenu 30 s sans interruption, avec échantillonnage de nvidia-smi toutes les 0.5 s ; les 20 % premiers échantillons sont écartés pour ne garder que le régime permanent",
+      "duree_mesure_s": 30,
+      "rtx3090": {
+        "tflops_bf16": 24.98,
+        "puissance_moyenne_w": 170,
+        "puissance_min_w": 170,
+        "puissance_max_w": 170,
+        "horloge_sm_moyenne_mhz": 596,
+        "horloge_sm_min_mhz": 570,
+        "horloge_sm_max_mhz": 630,
+        "horloge_sm_max_theorique_mhz": 2100,
+        "temperature_max_c": 48,
+        "utilisation_moyenne_pct": 100,
+        "echantillons": 47
+      },
+      "rtx3060": {
+        "tflops_bf16": 27.53,
+        "puissance_moyenne_w": 144,
+        "puissance_min_w": 140,
+        "puissance_max_w": 145,
+        "horloge_sm_moyenne_mhz": 1966,
+        "horloge_sm_min_mhz": 1950,
+        "horloge_sm_max_mhz": 1972,
+        "horloge_sm_max_theorique_mhz": 2160,
+        "temperature_max_c": 60,
+        "utilisation_moyenne_pct": 100,
+        "echantillons": 48
+      }
+    },
+    "anomalie_bridage_3090": {
+      "constat": "Le RTX 3090 produit moins de calcul que le RTX 3060 alors qu'il possède 2.9x plus de SM (82 contre 28).",
+      "cause_identifiee": "plafond de puissance fixé à 170 W",
+      "puissance_plafond_configuree_w": 170,
+      "puissance_plafond_defaut_w": 420,
+      "puissance_plafond_max_w": 500,
+      "methode_identification": "nvidia-smi --query-gpu=power.limit,power.default_limit,power.max_limit,enforced.power.limit",
+      "cause_thermique_ecartee": "température stabilisée à 48 °C en charge 100 %, et nvidia-smi -q -d PERFORMANCE ne signale aucun HW/SW Thermal Slowdown",
+      "verification_arithmetique": "82/28 SM = 2.93x d'unités de calcul, mais 596/1966 MHz = 0.303x de fréquence. 2.93 x 0.303 = 0.89, à comparer au rapport de débit mesuré 24.98/27.53 = 0.91. L'écart de 2 points s'explique par les différences de bande passante mémoire entre les deux cartes.",
+      "decision_utilisateur": "relever le plafond à 280 W",
+      "statut": "résolu",
+      "resolu_utc": "2026-08-04T14:08:00Z",
+      "commande_appliquee": "sudo nvidia-smi -i 1 -pl 280",
+      "mesure_apres_relevement": {
+        "methode": "protocole identique à la mesure à 170 W : matmul bf16 8192x8192 maintenu 30 s, échantillonnage nvidia-smi toutes les 0.5 s, 20 % premiers échantillons écartés",
+        "date_utc": "2026-08-04T14:08:00Z",
+        "plafond_puissance_w": 280,
+        "tflops_bf16": 62.86,
+        "puissance_moyenne_w": 279,
+        "horloge_sm_moyenne_mhz": 1506,
+        "horloge_sm_min_mhz": 1455,
+        "horloge_sm_max_mhz": 1530,
+        "temperature_max_c": 54,
+        "utilisation_moyenne_pct": 100,
+        "echantillons": 47
+      },
+      "gain": {
+        "facteur_debit": 2.52,
+        "detail_debit": "24.98 -> 62.86 TFLOPS bf16",
+        "facteur_horloge": 2.53,
+        "detail_horloge": "596 -> 1506 MHz",
+        "cout_puissance_w": 110,
+        "commentaire": "Les deux facteurs coïncident à 0.01 près, ce qui confirme que la puissance était l'unique verrou : à débit proportionnel à la fréquence, aucune autre limite (mémoire, thermique) n'intervenait.",
+        "rapport_au_3060": "62.86 / 27.53 = 2.28x, cohérent avec les 2.93x d'unités de calcul du 3090 pondérés par sa fréquence désormais plus basse que celle du 3060 (1506 contre 1966 MHz)"
+      },
+      "marge_restante": {
+        "constat": "à 280 W la carte reste au plafond (279 W moyens, min 279 max 280) alors que la température plafonne à 54 °C",
+        "interpretation": "il reste de la marge thermique et donc du gain disponible si le plafond était encore relevé ; le choix de 280 W est un arbitrage puissance/performance assumé, pas une limite physique de la carte",
+        "gain_supplementaire_potentiel": "non mesuré"
+      }
+    }
+  },
+  "phase1_donnees": {
+    "statut": "terminé",
+    "source_url": "https://database.lichess.org/standard/lichess_db_standard_rated_2026-07.pgn.zst",
+    "dump_last_modified_utc": "2026-08-01T21:10:40Z",
+    "telechargement": {
+      "taille_octets": 29051046504,
+      "taille_gio": 27.05,
+      "integrite": "taille du fichier reçu identique au content-length annoncé, octet pour octet",
+      "duree_s": 508,
+      "debit_moyen_mo_s": 54.6,
+      "methode": "wget -c, débit moyen rapporté par wget en fin de transfert"
+    },
+    "vocabulaire": {
+      "taille_totale": 1971,
+      "tokens_speciaux": 3,
+      "coups_uci_distincts": 1968,
+      "methode": "énumération de tous les déplacements géométriquement possibles sur échiquier vide (rayons de dame + sauts de cavalier), plus les promotions depuis la 7e vers la 8e rangée et depuis la 2e vers la 1re, en q/r/b/n",
+      "validation": "sur 500 parties tirées au hasard du corpus produit, 0 coup absent du vocabulaire"
+    },
+    "benchmark_parsing": {
+      "date_utc": "2026-08-04T13:52:34Z",
+      "methode": "lecture des 50 000 premières parties du dump, chronométrage séparé de la décompression, du traitement séquentiel et du traitement parallèle sur le même échantillon ; le résultat parallèle est comparé au séquentiel pour vérifier qu'ils produisent le même nombre de parties",
+      "echantillon_parties": 50000,
+      "workers": 10,
+      "decompression_et_decoupage_parties_s": 130089,
+      "traitement_1_coeur_parties_s": 5163,
+      "traitement_10_ouvriers_parties_s": 30619,
+      "acceleration_mesuree": 5.93,
+      "acceleration_ideale": 10,
+      "commentaire_acceleration": "5.93x sur 10 ouvriers pour 6 cœurs physiques : l'hyperthreading n'apporte pas un doublement, et le processus principal reste seul à décompresser.",
+      "extrapolation_800M_tokens": {
+        "parties_a_lire_millions": 92.09,
+        "heures_1_coeur": 4.95,
+        "heures_10_ouvriers": 0.84,
+        "methode": "tokens par partie lue = longueur moyenne x taux de rétention = 71.52 x 0.1215 = 8.69 ; 800e6 / 8.69 = 92.1 M parties à lire ; divisé par le débit mesuré"
+      }
+    },
+    "filtrage_echantillon_50k": {
+      "taux_retention": 0.1215,
+      "longueur_moyenne_demi_coups": 71.52,
+      "motifs_de_rejet": {
+        "elo_hors_bornes": {
+          "parties": 23502,
+          "part": 0.47
+        },
+        "cadence_exclue": {
+          "parties": 18402,
+          "part": 0.368
+        },
+        "terminaison": {
+          "parties": 1926,
+          "part": 0.039
+        },
+        "trop_courte": {
+          "parties": 97,
+          "part": 0.002
+        }
+      },
+      "note": "Un rejet est attribué au premier critère qui échoue, dans l'ordre cadence, Elo, terminaison, position initiale, longueur. Les parts ne sont donc pas des taux d'échec indépendants."
+    },
+    "validation_corpus": {
+      "methode": "500 parties tirées au hasard dans un corpus de test de 23 834 parties, rejouées coup par coup avec python-chess depuis la position initiale",
+      "parties_testees": 500,
+      "coups_hors_vocabulaire": 0,
+      "parties_avec_coup_illegal": 0
+    },
+    "parse_complet": {
+      "statut": "terminé",
+      "date_utc": "2026-08-04T14:48:00Z",
+      "parties_lues": 89288421,
+      "parties_conservees": 11035777,
+      "taux_retention": 0.1236,
+      "tokens_coups_total": 789834938,
+      "longueur_moyenne_demi_coups": 71.57,
+      "longueur_min_demi_coups": 20,
+      "longueur_max_demi_coups": 300,
+      "duree_s": 3269.8,
+      "duree_min": 54.5,
+      "debit_parties_s": 27306.9,
+      "workers": 10,
+      "dump_epuise_avant_objectif": true,
+      "commentaire_objectif": "Le dump de juillet 2026 a été consommé intégralement (89.3 M de parties) et fournit 789.8 M de tokens, soit 98.7 % de l'objectif de 800 M. L'écart est trop faible pour justifier de télécharger un second mois : aucune décision d'entraînement ne change entre 790 et 800 M de tokens.",
+      "rejets": {
+        "elo_hors_bornes": 42318347,
+        "cadence_exclue": 32376011,
+        "terminaison": 3355996,
+        "trop_courte": 201270,
+        "trop_longue": 1020
+      },
+      "note_rejets": "Un rejet est attribué au premier critère qui échoue, dans l'ordre cadence, Elo, terminaison, position initiale, longueur. Ce ne sont donc pas des taux d'échec indépendants et ils ne s'additionnent pas.",
+      "qualite_de_l_extrapolation": {
+        "parties_a_lire_predites_millions": 92.09,
+        "parties_lues_reelles_millions": 89.29,
+        "ecart_relatif": 0.031,
+        "duree_predite_min": 50.4,
+        "duree_reelle_min": 54.5,
+        "ecart_relatif_duree": 0.081,
+        "commentaire": "L'extrapolation faite sur un échantillon de 50 000 parties (0.06 % du dump) prédisait le volume à 3 % près et la durée à 8 % près."
+      }
+    },
+    "encodage_bin": {
+      "statut": "terminé",
+      "date_utc": "2026-08-04T15:06:00Z",
+      "tokens_total_avec_speciaux": 811906492,
+      "tokens_train": 803780147,
+      "tokens_val": 8126345,
+      "parties_train": 10925420,
+      "parties_val": 110357,
+      "octets_train": 1607560294,
+      "octets_val": 16252690,
+      "dtype": "uint16",
+      "duree_min": 2.2,
+      "split": "99/1 par PARTIE et non par token, tirage numpy seed 1337",
+      "justification_split_par_partie": "Découper par token couperait une partie en deux : le modèle aurait vu le début pendant l'entraînement et on lui demanderait de prédire la suite comme si c'était nouveau. Cette fuite est sournoise car elle améliore la loss de validation sans produire aucun symptôme visible.",
+      "validation_integrite": {
+        "methode": "rejeu coup par coup avec python-chess de 200 parties décodées depuis train.bin, plus vérification que tout token est dans le vocabulaire et que chaque partie se termine par <eos>",
+        "parties_rejouees": 200,
+        "parties_avec_coup_illegal": 0,
+        "tokens_hors_vocabulaire": 0
+      },
+      "contamination_train_val": {
+        "methode": "reconstruction du masque de split avec la même graine, puis comparaison des chaînes de coups exactes entre les 10 925 420 parties d'entraînement et les 110 356 parties de validation distinctes",
+        "parties_val_distinctes": 110356,
+        "doublons_internes_val": 1,
+        "parties_train_identiques_a_une_partie_val": 137,
+        "taux_contamination": 0.001241,
+        "commentaire": "0.124 % du jeu de validation a un jumeau exact dans l'entraînement. Ce sont des suites de coups courtes et communes qui se répètent naturellement dans un corpus de 11 millions de parties. L'effet sur la loss de validation est négligeable et le chiffre est publié plutôt que corrigé, car re-découper ne supprimerait pas la cause."
+      }
+    }
+  },
+  "phase2_modele": {
+    "statut": "terminé",
+    "date_utc": "2026-08-04T14:07:02Z",
+    "architecture": {
+      "type": "Transformer décodeur, pre-norm, RMSNorm, RoPE, SwiGLU",
+      "n_layer": 16,
+      "n_embd": 512,
+      "n_head": 8,
+      "head_dim": 64,
+      "mlp_hidden": 1408,
+      "block_size": 256,
+      "vocab_size": 1971,
+      "embeddings_lies": true,
+      "rope_theta": 10000.0,
+      "dropout": 0.0,
+      "justification_mlp_hidden": "SwiGLU utilise 3 matrices au lieu de 2, on réduit donc la dimension cachée d'un facteur 2/3 par rapport aux 4x habituels : 512 x 8/3 = 1365, arrondi à 1408 pour tomber sur un multiple de 64"
+    },
+    "parametres": {
+      "totaux": 52406272,
+      "non_embedding": 51397120,
+      "methode": "somme des numel() de tous les paramètres, moins la matrice d'embedding (partagée avec la tête de sortie puisque les poids sont liés)"
+    },
+    "flops_par_token": {
+      "valeur": 333548544,
+      "methode": "6 FLOP par paramètre non-embedding et par token (2 en passe avant, 4 en passe arrière), plus 12 x n_layer x n_embd x block_size pour l'attention dont le coût dépend de la longueur de contexte et n'est pas capté par le comptage de paramètres"
+    },
+    "loss_initialisation": {
+      "mesuree": 7.7069,
+      "attendue_au_hasard": 7.5863,
+      "methode_attendue": "ln(vocab_size) = ln(1971)",
+      "commentaire": "légèrement au-dessus du hasard, ce qui est le comportement normal d'une initialisation aléatoire",
+      "controle_cible_egale_entree": 5.998,
+      "commentaire_controle": "évaluer le modèle sur targets=inputs (prédire le token courant au lieu du suivant) donne 5.998, bien en dessous du hasard, dès l'initialisation. Ce n'est pas un bug : les embeddings liés plus la connexion résiduelle permettent au réseau de recopier son entrée. C'est un piège de test à connaître, pas une propriété du modèle."
+    },
+    "test_surapprentissage": {
+      "reussi": true,
+      "protocole": "100 parties chargées en mémoire GPU, entraînement jusqu'à ce que la loss d'entraînement passe sous 0.05",
+      "parties": 100,
+      "tokens_du_jeu": 7350,
+      "loss_initiale": 7.1345,
+      "loss_finale": 0.0351,
+      "best_val_loss": 0.0391,
+      "steps_necessaires": 270,
+      "duree_s": 128.0,
+      "batch_size": 64,
+      "conclusion": "le modèle mémorise 100 parties en 2.1 minutes, donc ni le modèle, ni le chargement des données, ni la boucle d'entraînement ne comportent de bug bloquant"
+    },
+    "debit_entrainement": {
+      "tokens_par_s": 101000,
+      "plage_observee_tokens_par_s": "97000 - 108000",
+      "mfu": 0.536,
+      "plage_observee_mfu": "0.514 - 0.573",
+      "methode_mfu": "(tokens/s x FLOP par token) / 62.86e12, où 62.86 TFLOPS est le débit bf16 réellement mesuré sur cette carte à 280 W, et non la valeur de la fiche technique",
+      "conditions": "batch 64 séquences x 256 tokens, bf16 autocast, torch.compile actif, jeu de données entièrement en mémoire GPU (mode surapprentissage)",
+      "reserve": "mesuré en mode surapprentissage, donc sans lecture disque ; le débit du run complet avec memmap sera mesuré séparément",
+      "artefact_de_mesure_corrige": "les intervalles de journalisation englobant une évaluation affichaient un débit effondré (15 % de MFU au lieu de 55 %) car le temps d'évaluation était compté comme du temps d'entraînement. Les compteurs sont désormais remis à zéro après chaque évaluation."
+    }
+  },
+  "phase3_entrainement": {
+    "statut": "terminé",
+    "date_lancement_utc": "2026-08-04T15:09:00Z",
+    "configuration": {
+      "batch_size": 192,
+      "block_size": 256,
+      "tokens_par_step": 49152,
+      "max_steps": 16300,
+      "tokens_prevus": 801177600,
+      "epochs": 0.997,
+      "lr": 0.0006,
+      "lr_min": 6e-05,
+      "warmup_steps": 500,
+      "weight_decay": 0.1,
+      "betas": [
+        0.9,
+        0.95
+      ],
+      "grad_clip": 1.0,
+      "snapshot_every_steps": 1000,
+      "device": "cuda:1 (RTX 3090)"
+    },
+    "debit_mesure": {
+      "tokens_par_s": 127005,
+      "mfu": 0.674,
+      "methode": "moyenne sur les steps 10 à 20, hors temps d'évaluation",
+      "vram_utilisee_mib": 18478,
+      "vram_totale_mib": 24576,
+      "puissance_w": 278.79,
+      "horloge_sm_mhz": 1845,
+      "utilisation_gpu_pct": 97,
+      "comparaison_batch_64": "53.6 % de MFU à batch 64 contre 67.4 % à batch 192 : un batch plus large amortit mieux les coûts fixes par step"
+    },
+    "duree_estimee_h": 1.75,
+    "methode_duree_estimee": "801 177 600 tokens / 127 005 tokens par seconde",
+    "duree_reelle_h": 2.0,
+    "loss_finale_train": 1.6024,
+    "loss_finale_val": 1.6434,
+    "courbe_progression": {
+      "_methode": "chaque instantané est évalué sur le RTX 3060 pendant que le 3090 continue d'entraîner. Échantillons réduits (2000 positions pour la légalité, 60 parties complètes, 150 positions par règle) : ces points servent à tracer une courbe, pas à publier un chiffre définitif. L'évaluation finale utilisera des échantillons bien plus grands.",
+      "points": [
+        {
+          "step": 1000,
+          "tokens_vus": 49152000,
+          "legalite_generation_libre": 0.851,
+          "legalite_ic95": [
+            0.83472,
+            0.86593
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.3785,
+          "accord_humain_top5": 0.7575,
+          "parties_completes_sans_faute": 0.01667,
+          "parties_testees": 60,
+          "regle_roque": 0.98667,
+          "regle_en_passant": 0.98,
+          "regle_promotion": 0.88,
+          "regle_sortie_echec": 0.76667
+        },
+        {
+          "step": 2000,
+          "tokens_vus": 98304000,
+          "legalite_generation_libre": 0.9155,
+          "legalite_ic95": [
+            0.9025,
+            0.92691
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.438,
+          "accord_humain_top5": 0.8135,
+          "parties_completes_sans_faute": 0.15,
+          "parties_testees": 60,
+          "regle_roque": 0.98,
+          "regle_en_passant": 0.98667,
+          "regle_promotion": 0.94667,
+          "regle_sortie_echec": 0.86
+        },
+        {
+          "step": 3000,
+          "tokens_vus": 147456000,
+          "legalite_generation_libre": 0.9475,
+          "legalite_ic95": [
+            0.93684,
+            0.95645
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.4635,
+          "accord_humain_top5": 0.829,
+          "parties_completes_sans_faute": 0.13333,
+          "parties_testees": 60,
+          "regle_roque": 0.98667,
+          "regle_en_passant": 1.0,
+          "regle_promotion": 0.97333,
+          "regle_sortie_echec": 0.92667
+        },
+        {
+          "step": 4000,
+          "tokens_vus": 196608000,
+          "legalite_generation_libre": 0.951,
+          "legalite_ic95": [
+            0.94064,
+            0.95963
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.4655,
+          "accord_humain_top5": 0.844,
+          "parties_completes_sans_faute": 0.26667,
+          "parties_testees": 60,
+          "regle_roque": 1.0,
+          "regle_en_passant": 1.0,
+          "regle_promotion": 0.99333,
+          "regle_sortie_echec": 0.92667
+        },
+        {
+          "step": 5000,
+          "tokens_vus": 245760000,
+          "legalite_generation_libre": 0.955,
+          "legalite_ic95": [
+            0.94501,
+            0.96325
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.4775,
+          "accord_humain_top5": 0.853,
+          "parties_completes_sans_faute": 0.36667,
+          "parties_testees": 60,
+          "regle_roque": 1.0,
+          "regle_en_passant": 1.0,
+          "regle_promotion": 0.96667,
+          "regle_sortie_echec": 0.92667
+        },
+        {
+          "step": 6000,
+          "tokens_vus": 294912000,
+          "legalite_generation_libre": 0.966,
+          "legalite_ic95": [
+            0.95712,
+            0.97309
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.48,
+          "accord_humain_top5": 0.8595,
+          "parties_completes_sans_faute": 0.35,
+          "parties_testees": 60,
+          "regle_roque": 0.98667,
+          "regle_en_passant": 0.99333,
+          "regle_promotion": 0.96667,
+          "regle_sortie_echec": 0.92667
+        },
+        {
+          "step": 7000,
+          "tokens_vus": 344064000,
+          "legalite_generation_libre": 0.9655,
+          "legalite_ic95": [
+            0.95657,
+            0.97265
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.482,
+          "accord_humain_top5": 0.8635,
+          "parties_completes_sans_faute": 0.31667,
+          "parties_testees": 60,
+          "regle_roque": 0.99333,
+          "regle_en_passant": 0.99333,
+          "regle_promotion": 1.0,
+          "regle_sortie_echec": 0.94
+        },
+        {
+          "step": 8000,
+          "tokens_vus": 393216000,
+          "legalite_generation_libre": 0.969,
+          "legalite_ic95": [
+            0.96046,
+            0.97574
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.491,
+          "accord_humain_top5": 0.865,
+          "parties_completes_sans_faute": 0.4,
+          "parties_testees": 60,
+          "regle_roque": 0.99333,
+          "regle_en_passant": 0.99333,
+          "regle_promotion": 0.99333,
+          "regle_sortie_echec": 0.95333
+        },
+        {
+          "step": 9000,
+          "tokens_vus": 442368000,
+          "legalite_generation_libre": 0.9695,
+          "legalite_ic95": [
+            0.96102,
+            0.97618
+          ],
+          "positions_testees": 2000,
+          "accord_humain_top1": 0.505,
+          "accord_humain_top5": 0.8805,
+          "parties_completes_sans_faute": 0.41667,
+          "parties_testees": 60,
+          "regle_roque": 1.0,
+          "regle_en_passant": 1.0,
+          "regle_promotion": 0.99333,
+          "regle_sortie_echec": 0.96
+        }
+      ]
+    },
+    "thermique": {
+      "methode": "nvidia-smi après 99 minutes de charge d'entraînement continue",
+      "temperature_3090_c": 78,
+      "puissance_w": 279.15,
+      "utilisation_pct": 97,
+      "temperature_benchmark_court_c": 54,
+      "commentaire": "Le benchmark de 30 s de la phase 0 mesurait 54 °C, l'entraînement réel stabilise à 78 °C. Aucun ralentissement observé — le débit est resté à 120 000 tokens/s — mais l'écart rappelle qu'un benchmark court ne renseigne pas sur le comportement thermique en régime permanent."
+    },
+    "date_fin_utc": "2026-08-04T17:09:00Z",
+    "resultat": {
+      "steps": 16300,
+      "tokens_vus": 801177600,
+      "loss_train_finale": 1.6024,
+      "best_val_loss": 1.6434,
+      "duree_s": 7192.8,
+      "duree_h": 2.0,
+      "epochs": 0.997,
+      "debit_moyen_tokens_s": 111386,
+      "mfu_regime_permanent": 0.639
+    },
+    "qualite_estimation_duree": {
+      "duree_estimee_h": 1.75,
+      "duree_reelle_h": 2.0,
+      "ecart_relatif": 0.143,
+      "cause": "l'estimation reposait sur le débit des vingt premiers steps (127 005 tokens/s, MFU 67.4 %). Le régime permanent s'établit à 120 300 tokens/s et 63.9 % de MFU, auxquels s'ajoutent 65 évaluations sur le jeu de validation qui ne produisent aucun token d'entraînement. Mesurer un débit sur les premiers steps d'un run le surestime systématiquement."
+    }
+  },
+  "phase4_evaluation": {
+    "statut": "terminé",
+    "date_utc": "2026-08-04T17:13:58Z",
+    "checkpoint": "run1_best.pt",
+    "step": 16250,
+    "tokens_vus": 798720000,
+    "parties_validation_disponibles": 110357,
+    "taux_coups_legaux_generation_libre": {
+      "taux": 0.9786,
+      "ic95_bas": 0.9765,
+      "ic95_haut": 0.98052,
+      "positions_testees": 20000,
+      "temperature": 1.0,
+      "motifs_echec": {
+        "deplacement_illegal": 222,
+        "token_special": 175,
+        "case_depart_vide": 26,
+        "piece_adverse": 5
+      },
+      "methode": "un coup échantillonné sans masquage sur chaque position, positions tirées à un demi-coup aléatoire de parties du jeu de validation, légalité vérifiée par python-chess ; intervalle de Wilson à 95 %"
+    },
+    "taux_parties_completes_sans_coup_illegal": {
+      "taux": 0.604,
+      "ic95_bas": 0.5605,
+      "ic95_haut": 0.64592,
+      "parties_jouees": 500,
+      "longueur_moyenne_demi_coups": 46.51,
+      "demi_coups_moyens_avant_premiere_faute": 45.3,
+      "terminaisons": {
+        "coup_illegal": 198,
+        "eos_predit": 275,
+        "partie_terminee_regles": 27
+      },
+      "methode": "parties générées depuis la position initiale, le modèle joue les deux couleurs, aucun masquage, arrêt à la première illégalité ou à <eos>",
+      "nuance_importante": {
+        "constat": "Le taux de 60.40 % additionne deux situations très différentes : 275 parties (55.0 %) se terminent parce que le modèle a prédit le token <eos>, et seulement 27 (5.4 %) parce que la position atteinte est une vraie fin de partie selon les règles (mat, pat, matériel insuffisant, répétition).",
+        "parties_terminees_par_eos_predit": 275,
+        "parties_terminees_par_les_regles": 27,
+        "parties_interrompues_par_coup_illegal": 198,
+        "longueur_moyenne_parties_generees_demi_coups": 46.51,
+        "longueur_moyenne_corpus_reel_demi_coups": 71.57,
+        "interpretation": "Le modèle a appris qu'une partie se termine, et à peu près quand, mais il coupe plus tôt que les humains : 46.5 demi-coups contre 71.6 dans le corpus. Il ne joue donc pas les finales, il annonce la fin avant d'y arriver. Le chiffre de 60.40 % répond bien à la question posée — une partie jouée sans aucun coup illégal — mais il ne signifie pas que le modèle mène 60 % de ses parties jusqu'au mat.",
+        "CORRECTION_2026-08-04T18-40": {
+          "ce_qui_etait_ecrit": "La note précédente concluait que 'le modèle ne joue pas les finales, il annonce la fin avant d'y arriver'. Cette conclusion est fausse sur deux points, tous deux vérifiés par la mesure.",
+          "biais_1_temperature": {
+            "probleme": "La mesure a été faite à température 1.0 alors que engine.py joue à température 0. À température 1, le modèle échantillonne <eos> par accident environ 0.9 % du temps, ce qui compound sur 70 demi-coups.",
+            "mesure_balayage_temperature": {
+              "methode": "200 parties générées par température, même graine",
+              "1.0": {
+                "parties_sans_faute": 0.525,
+                "longueur_moyenne": 48.2,
+                "fins_reelles": 9
+              },
+              "0.8": {
+                "parties_sans_faute": 0.68,
+                "longueur_moyenne": 54.5,
+                "fins_reelles": 19
+              },
+              "0.6": {
+                "parties_sans_faute": 0.805,
+                "longueur_moyenne": 64.1,
+                "fins_reelles": 24
+              },
+              "0.4": {
+                "parties_sans_faute": 0.825,
+                "longueur_moyenne": 63.6,
+                "fins_reelles": 33
+              },
+              "0.2": {
+                "parties_sans_faute": 0.87,
+                "longueur_moyenne": 60.5,
+                "fins_reelles": 39
+              }
+            },
+            "conclusion": "À température 0.6 les parties font 64.1 demi-coups contre 71.6 dans le corpus, soit 89 % de la longueur réelle et non 65 %. Le taux de parties sans faute passe de 52.5 % à 87 %."
+          },
+          "biais_2_mauvaise_reference": {
+            "probleme": "Les 5.4 % de parties atteignant une position terminale étaient implicitement comparés à 100 %. La bonne référence est le corpus.",
+            "mesure_corpus": {
+              "methode": "3000 parties humaines du jeu de validation rejouées jusqu'au bout",
+              "finissant_sur_position_terminale": 0.29,
+              "dont_mat": 0.232,
+              "finissant_par_abandon_ou_accord": 0.71
+            },
+            "conclusion": "71 % des parties humaines se terminent par abandon ou accord, ce qui s'écrit exactement <eos> dans notre flux de tokens. Quand le modèle émet <eos> sans mat, il imite le comportement dominant du corpus. À température 0.6 il produit 12 % de fins terminales contre 29 % chez les humains : il abandonne un peu trop tôt, d'un facteur deux, et non d'un facteur vingt."
+          },
+          "consequence": "La piste 'sur-échantillonner les fins de partie à l'entraînement' a été abandonnée : elle corrigerait un problème largement inexistant. Le vrai réglage est la température d'échantillonnage à l'inférence."
+        }
+      }
+    },
+    "accord_humain": {
+      "top1": {
+        "taux": 0.5142,
+        "ic95_bas": 0.50727,
+        "ic95_haut": 0.52112
+      },
+      "top5": {
+        "taux": 0.8872,
+        "ic95_bas": 0.88274,
+        "ic95_haut": 0.89151
+      },
+      "positions_testees": 20000,
+      "methode": "comparaison du coup le plus probable (et des 5 plus probables) au coup effectivement joué par l'humain, sur des positions du jeu de validation ; intervalle de Wilson",
+      "avertissement": "Ce n'est PAS une mesure de la qualité du jeu. Un moteur parfait aurait un accord faible avec des joueurs de 2000 Elo puisqu'il jouerait mieux qu'eux. Ce chiffre mesure la fidélité à la distribution d'entraînement."
+    },
+    "tests_par_regle": {
+      "roque": {
+        "positions": 500,
+        "top1_legal": {
+          "taux": 1.0,
+          "ic95_bas": 0.99238,
+          "ic95_haut": 1.0
+        },
+        "top1_egal_coup_humain": {
+          "taux": 0.778,
+          "ic95_bas": 0.73953,
+          "ic95_haut": 0.81223
+        },
+        "masse_probabilite_coups_legaux": {
+          "moyenne": 0.99498,
+          "min": 0.71329,
+          "max": 0.99998
+        }
+      },
+      "en_passant": {
+        "positions": 500,
+        "top1_legal": {
+          "taux": 1.0,
+          "ic95_bas": 0.99238,
+          "ic95_haut": 1.0
+        },
+        "top1_egal_coup_humain": {
+          "taux": 0.766,
+          "ic95_bas": 0.72695,
+          "ic95_haut": 0.801
+        },
+        "masse_probabilite_coups_legaux": {
+          "moyenne": 0.98797,
+          "min": 0.72966,
+          "max": 0.99978
+        }
+      },
+      "promotion": {
+        "positions": 500,
+        "top1_legal": {
+          "taux": 0.986,
+          "ic95_bas": 0.97139,
+          "ic95_haut": 0.9932
+        },
+        "top1_egal_coup_humain": {
+          "taux": 0.784,
+          "ic95_bas": 0.74584,
+          "ic95_haut": 0.81783
+        },
+        "masse_probabilite_coups_legaux": {
+          "moyenne": 0.96029,
+          "min": 0.39124,
+          "max": 0.99945
+        }
+      },
+      "echec": {
+        "positions": 500,
+        "top1_legal": {
+          "taux": 0.966,
+          "ic95_bas": 0.94623,
+          "ic95_haut": 0.97867
+        },
+        "top1_egal_coup_humain": {
+          "taux": 0.69,
+          "ic95_bas": 0.64814,
+          "ic95_haut": 0.72896
+        },
+        "masse_probabilite_coups_legaux": {
+          "moyenne": 0.91549,
+          "min": 0.00691,
+          "max": 0.99985
+        }
+      }
+    },
+    "tests_par_regle_methode": "positions extraites de vraies parties du jeu de validation : pour 'roque', 'en_passant' et 'promotion', les positions où l'humain a effectivement joué ce type de coup ; pour 'echec', les positions où le camp au trait est en échec et doit donc en sortir. Le modèle est interrogé sans masquage.",
+    "duree_evaluation_s": 86.2
+  },
+  "phase5_elo": {
+    "statut": "terminé",
+    "date_utc": "2026-08-04T17:15:27Z",
+    "echelle_instantanes": {
+      "methode": "chaque instantané joue contre le checkpoint de référence passé en --ckpt, couleurs alternées, ouvertures aléatoires. L'écart d'Elo est donc relatif au modèle final : l'origine est arbitraire, c'est la forme de la courbe qui a un sens.",
+      "reference": "run1_best.pt (step 16250, 798.7 M tokens vus)",
+      "parties_par_instantane": 60,
+      "protocole": {
+        "parties_par_niveau": 200,
+        "movetime_ms": 50,
+        "demi_coups_aleatoires": 4,
+        "couleurs": "alternées, le modèle joue blanc une partie sur deux",
+        "temperature_modele": 0.0,
+        "juge": "python-chess, pas cutechess-cli — ce dernier n'est empaqueté ni dans Homebrew ni dans apt sur cette machine et sa compilation exige Qt6 et les droits administrateur"
+      },
+      "amplitude_elo": {
+        "premier_point": -636,
+        "dernier_point": 52,
+        "amplitude": 688,
+        "commentaire": "Le premier point (49.2 M tokens) n'a pas de borne inférieure : il n'a gagné aucune des 60 parties, et la formule d'Elo diverge quand le score approche zéro. La valeur -636 est donc une estimation ponctuelle sans intervalle symétrique."
+      },
+      "points": [
+        {
+          "parties": 60,
+          "victoires": 0,
+          "nulles": 3,
+          "defaites": 57,
+          "score": 0.025,
+          "erreur_type_score": 0.01407,
+          "elo_diff": -636.4,
+          "elo_diff_ic95_bas": null,
+          "elo_diff_ic95_haut": -502.3,
+          "marge_erreur": null,
+          "step": 1000,
+          "tokens_vus": 49152000,
+          "duree_s": 68.7,
+          "terminaisons": {
+            "checkmate": 57,
+            "threefold_repetition": 3
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 1,
+          "nulles": 13,
+          "defaites": 46,
+          "score": 0.125,
+          "erreur_type_score": 0.03033,
+          "elo_diff": -338.0,
+          "elo_diff_ic95_bas": -461.6,
+          "elo_diff_ic95_haut": -258.2,
+          "marge_erreur": 101.7,
+          "step": 2000,
+          "tokens_vus": 98304000,
+          "duree_s": 79.7,
+          "terminaisons": {
+            "checkmate": 47,
+            "stalemate": 8,
+            "threefold_repetition": 5
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 1,
+          "nulles": 14,
+          "defaites": 45,
+          "score": 0.1333,
+          "erreur_type_score": 0.03088,
+          "elo_diff": -325.2,
+          "elo_diff_ic95_bas": -442.0,
+          "elo_diff_ic95_haut": -247.6,
+          "marge_erreur": 97.2,
+          "step": 3000,
+          "tokens_vus": 147456000,
+          "duree_s": 82.1,
+          "terminaisons": {
+            "checkmate": 46,
+            "threefold_repetition": 10,
+            "insufficient_material": 2,
+            "stalemate": 2
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 5,
+          "nulles": 10,
+          "defaites": 45,
+          "score": 0.1667,
+          "erreur_type_score": 0.04025,
+          "elo_diff": -279.6,
+          "elo_diff_ic95_bas": -406.7,
+          "elo_diff_ic95_haut": -195.0,
+          "marge_erreur": 105.9,
+          "step": 4000,
+          "tokens_vus": 196608000,
+          "duree_s": 83.1,
+          "terminaisons": {
+            "checkmate": 50,
+            "threefold_repetition": 6,
+            "stalemate": 3,
+            "insufficient_material": 1
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 6,
+          "nulles": 19,
+          "defaites": 35,
+          "score": 0.2583,
+          "erreur_type_score": 0.04329,
+          "elo_diff": -183.2,
+          "elo_diff_ic95_bas": -271.2,
+          "elo_diff_ic95_haut": -112.8,
+          "marge_erreur": 79.2,
+          "step": 5000,
+          "tokens_vus": 245760000,
+          "duree_s": 84.5,
+          "terminaisons": {
+            "threefold_repetition": 14,
+            "checkmate": 41,
+            "stalemate": 4,
+            "insufficient_material": 1
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 9,
+          "nulles": 19,
+          "defaites": 32,
+          "score": 0.3083,
+          "erreur_type_score": 0.04728,
+          "elo_diff": -140.4,
+          "elo_diff_ic95_bas": -224.3,
+          "elo_diff_ic95_haut": -69.7,
+          "marge_erreur": 77.3,
+          "step": 6000,
+          "tokens_vus": 294912000,
+          "duree_s": 85.8,
+          "terminaisons": {
+            "checkmate": 41,
+            "stalemate": 3,
+            "threefold_repetition": 16
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 5,
+          "nulles": 21,
+          "defaites": 34,
+          "score": 0.2583,
+          "erreur_type_score": 0.04165,
+          "elo_diff": -183.2,
+          "elo_diff_ic95_bas": -267.3,
+          "elo_diff_ic95_haut": -115.2,
+          "marge_erreur": 76.0,
+          "step": 7000,
+          "tokens_vus": 344064000,
+          "duree_s": 89.1,
+          "terminaisons": {
+            "checkmate": 39,
+            "threefold_repetition": 16,
+            "stalemate": 5
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 10,
+          "nulles": 19,
+          "defaites": 31,
+          "score": 0.325,
+          "erreur_type_score": 0.04834,
+          "elo_diff": -127.0,
+          "elo_diff_ic95_bas": -209.7,
+          "elo_diff_ic95_haut": -56.3,
+          "marge_erreur": 76.7,
+          "step": 8000,
+          "tokens_vus": 393216000,
+          "duree_s": 93.2,
+          "terminaisons": {
+            "checkmate": 41,
+            "stalemate": 6,
+            "threefold_repetition": 13
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 10,
+          "nulles": 22,
+          "defaites": 28,
+          "score": 0.35,
+          "erreur_type_score": 0.04758,
+          "elo_diff": -107.5,
+          "elo_diff_ic95_bas": -184.7,
+          "elo_diff_ic95_haut": -39.6,
+          "marge_erreur": 72.5,
+          "step": 9000,
+          "tokens_vus": 442368000,
+          "duree_s": 89.1,
+          "terminaisons": {
+            "checkmate": 38,
+            "threefold_repetition": 16,
+            "stalemate": 5,
+            "insufficient_material": 1
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 16,
+          "nulles": 19,
+          "defaites": 25,
+          "score": 0.425,
+          "erreur_type_score": 0.05247,
+          "elo_diff": -52.5,
+          "elo_diff_ic95_bas": -129.2,
+          "elo_diff_ic95_haut": 19.4,
+          "marge_erreur": 74.3,
+          "step": 10000,
+          "tokens_vus": 491520000,
+          "duree_s": 91.8,
+          "terminaisons": {
+            "checkmate": 41,
+            "threefold_repetition": 14,
+            "stalemate": 5
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 19,
+          "nulles": 14,
+          "defaites": 27,
+          "score": 0.4333,
+          "erreur_type_score": 0.05586,
+          "elo_diff": -46.6,
+          "elo_diff_ic95_bas": -127.9,
+          "elo_diff_ic95_haut": 29.8,
+          "marge_erreur": 78.9,
+          "step": 11000,
+          "tokens_vus": 540672000,
+          "duree_s": 95.3,
+          "terminaisons": {
+            "checkmate": 46,
+            "stalemate": 6,
+            "threefold_repetition": 8
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 14,
+          "nulles": 16,
+          "defaites": 30,
+          "score": 0.3667,
+          "erreur_type_score": 0.05253,
+          "elo_diff": -94.9,
+          "elo_diff_ic95_bas": -178.4,
+          "elo_diff_ic95_haut": -21.1,
+          "marge_erreur": 78.6,
+          "step": 12000,
+          "tokens_vus": 589824000,
+          "duree_s": 85.4,
+          "terminaisons": {
+            "checkmate": 44,
+            "threefold_repetition": 14,
+            "stalemate": 1,
+            "insufficient_material": 1
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 11,
+          "nulles": 23,
+          "defaites": 26,
+          "score": 0.375,
+          "erreur_type_score": 0.04805,
+          "elo_diff": -88.7,
+          "elo_diff_ic95_bas": -163.4,
+          "elo_diff_ic95_haut": -21.4,
+          "marge_erreur": 71.0,
+          "step": 13000,
+          "tokens_vus": 638976000,
+          "duree_s": 90.5,
+          "terminaisons": {
+            "checkmate": 37,
+            "threefold_repetition": 18,
+            "stalemate": 5
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 18,
+          "nulles": 21,
+          "defaites": 21,
+          "score": 0.475,
+          "erreur_type_score": 0.05194,
+          "elo_diff": -17.4,
+          "elo_diff_ic95_bas": -90.1,
+          "elo_diff_ic95_haut": 53.8,
+          "marge_erreur": 71.9,
+          "step": 14000,
+          "tokens_vus": 688128000,
+          "duree_s": 98.8,
+          "terminaisons": {
+            "checkmate": 39,
+            "stalemate": 6,
+            "insufficient_material": 2,
+            "threefold_repetition": 13
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 18,
+          "nulles": 20,
+          "defaites": 22,
+          "score": 0.4667,
+          "erreur_type_score": 0.05253,
+          "elo_diff": -23.2,
+          "elo_diff_ic95_bas": -97.2,
+          "elo_diff_ic95_haut": 48.7,
+          "marge_erreur": 72.9,
+          "step": 15000,
+          "tokens_vus": 737280000,
+          "duree_s": 95.9,
+          "terminaisons": {
+            "checkmate": 40,
+            "threefold_repetition": 13,
+            "stalemate": 4,
+            "insufficient_material": 3
+          }
+        },
+        {
+          "parties": 60,
+          "victoires": 26,
+          "nulles": 17,
+          "defaites": 17,
+          "score": 0.575,
+          "erreur_type_score": 0.05378,
+          "elo_diff": 52.5,
+          "elo_diff_ic95_bas": -21.2,
+          "elo_diff_ic95_haut": 131.3,
+          "marge_erreur": 76.2,
+          "step": 16000,
+          "tokens_vus": 786432000,
+          "duree_s": 89.1,
+          "terminaisons": {
+            "checkmate": 43,
+            "threefold_repetition": 12,
+            "stalemate": 4,
+            "insufficient_material": 1
+          }
+        }
+      ]
+    },
+    "matchs_stockfish": {
+      "date_utc": "2026-08-04T17:39:01Z",
+      "protocole": {
+        "parties_par_niveau": 200,
+        "movetime_ms": 50,
+        "demi_coups_aleatoires": 4,
+        "couleurs": "alternées, le modèle joue blanc une partie sur deux",
+        "temperature_modele": 0.0,
+        "juge": "python-chess, pas cutechess-cli — ce dernier n'est empaqueté ni dans Homebrew ni dans apt sur cette machine et sa compilation exige Qt6 et les droits administrateur"
+      },
+      "adversaire": "Stockfish 18 (Homebrew), 50 ms par coup, 1 thread, 16 Mo de hash",
+      "parties_totales": 800,
+      "resultats": [
+        {
+          "skill_level": 0,
+          "parties": 200,
+          "victoires": 97,
+          "nulles": 30,
+          "defaites": 73,
+          "score": 0.56,
+          "elo_diff": 41.9,
+          "elo_diff_ic95_bas": -2.3,
+          "elo_diff_ic95_haut": 87.5,
+          "marge_erreur": 44.9,
+          "terminaisons": {
+            "checkmate": 170,
+            "threefold_repetition": 24,
+            "stalemate": 5,
+            "insufficient_material": 1
+          }
+        },
+        {
+          "skill_level": 1,
+          "parties": 200,
+          "victoires": 56,
+          "nulles": 39,
+          "defaites": 105,
+          "score": 0.3775,
+          "elo_diff": -86.9,
+          "elo_diff_ic95_bas": -132.8,
+          "elo_diff_ic95_haut": -43.8,
+          "marge_erreur": 44.5,
+          "terminaisons": {
+            "checkmate": 161,
+            "threefold_repetition": 34,
+            "stalemate": 4,
+            "insufficient_material": 1
+          }
+        },
+        {
+          "skill_level": 2,
+          "parties": 200,
+          "victoires": 33,
+          "nulles": 39,
+          "defaites": 128,
+          "score": 0.2625,
+          "elo_diff": -179.5,
+          "elo_diff_ic95_bas": -230.4,
+          "elo_diff_ic95_haut": -134.8,
+          "marge_erreur": 47.8,
+          "terminaisons": {
+            "checkmate": 161,
+            "threefold_repetition": 36,
+            "stalemate": 2,
+            "insufficient_material": 1
+          }
+        },
+        {
+          "skill_level": 3,
+          "parties": 200,
+          "victoires": 17,
+          "nulles": 38,
+          "defaites": 145,
+          "score": 0.18,
+          "elo_diff": -263.4,
+          "elo_diff_ic95_bas": -321.0,
+          "elo_diff_ic95_haut": -216.0,
+          "marge_erreur": 52.5,
+          "terminaisons": {
+            "checkmate": 162,
+            "threefold_repetition": 36,
+            "insufficient_material": 1,
+            "stalemate": 1
+          }
+        }
+      ],
+      "lecture": "Le modèle est statistiquement à égalité avec Stockfish Skill Level 0 (+42 ± 45, l'intervalle contient zéro) et perd nettement à partir du niveau 1. Sa force se situe donc entre les niveaux 0 et 1 de Stockfish à cette cadence. La progression est parfaitement monotone d'un niveau au suivant, ce qui indique que la mesure est cohérente et non bruitée.",
+      "reserve_importante": "Ces écarts sont relatifs à Stockfish bridé à une cadence de 50 ms par coup sur cette machine. Ils ne se convertissent pas en Elo Lichess sans un point d'ancrage que ce projet n'a pas vérifié lui-même."
+    },
+    "elo_absolu": "non mesuré",
+    "note_elo_absolu": "Les chiffres ci-dessus sont des écarts d'Elo *relatifs* à Stockfish au niveau et à la cadence indiqués, mesurés sur cette machine. Les convertir en Elo absolu sur l'échelle Lichess demanderait un point d'ancrage que ce projet n'a pas vérifié lui-même. Le seul Elo absolu qui vaudra sera celui que Lichess attribuera au bot après ses premières parties classées, à la phase 6."
+  },
+  "incidents": [
+    {
+      "date_utc": "2026-08-04T13:38:00Z",
+      "titre": "Course à la VRAM déclenchée par l'arrêt d'un service",
+      "resume": "L'arrêt de llama-server (autorisé par l'utilisateur) a libéré 17.5 Gio sur le 3090, immédiatement captés par un conteneur Docker vLLM (wellington_vllm_inference, --gpu-memory-utilization 0.92, restart=unless-stopped) qui était jusque-là en échec silencieux faute de mémoire. En parallèle llama.service, géré par systemd en Restart=always, est entré en boucle de crash.",
+      "cause_racine": "nvidia-smi ne montre que les processus ayant réussi à allouer de la mémoire, jamais ceux qui la réclament en échec. Les candidats en boucle de redémarrage sont invisibles jusqu'à ce qu'on libère de la place.",
+      "resolution": "l'utilisateur a arrêté le conteneur Docker puis le service systemd ; les deux GPU sont depuis entièrement libres",
+      "resolu_utc": "2026-08-04T13:49:00Z"
+    }
+  ],
+  "phase6_bot_lichess": {
+    "statut": "EN LIGNE, première partie gagnée le 2026-08-07",
+    "pseudo": "philidor-142M",
+    "url": "https://lichess.org/@/philidor-142M",
+    "modele_deploye": "run2 (141 589 248 paramètres non-embedding)",
+    "checkpoint": "checkpoints/run2_best.pt",
+    "device": "cuda:0 (RTX 3060)",
+    "temperature": 0.0,
+    "variantes_acceptees": [
+      "standard"
+    ],
+    "cadences_acceptees": [
+      "rapid",
+      "classical",
+      "correspondence"
+    ],
+    "procedure": "LICHESS_BOT.md",
+    "configuration_deployee": "lichess-bot/config.yml (depuis lichess_bot_config.yml, token non versionné)",
+    "pieges_mise_en_ligne": [
+      "token OAuth créé sans le scope bot:play",
+      "engine.py sans bit exécutable (chmod +x requis même via interpréteur)",
+      "arguments moteur dans interpreter_options (passés à python) au lieu de engine_options -> exit 2",
+      "working_dir par défaut = dossier lichess-bot, vocab.json relatif introuvable -> exit 1",
+      "uci_options Move Overhead non déclarée par engine.py -> refus python-chess"
+    ],
+    "avertissement_lichess_bot": "Python 3.11+ requis à partir du 2026-10-31 (machine en 3.10)",
+    "elo_lichess": "non mesuré — se stabilise après ~30 parties classées",
+    "abort_time_s": 900,
+    "premiere_partie": {
+      "url": "https://lichess.org/0ofezMba",
+      "resultat": "geekours 0-1 philidor-142M (le bot, Noirs, gagne)",
+      "ouverture": "Queen's Pawn Game: Colle System (D04)",
+      "coups": "1.d4 d5 2.e3 Nf6 3.Nf3 Bg4 4.h3 Bh5 5.Bb5+ c6 6.Ba4 e6 7.O-O Bd6 8.Qd3 Bxf3 9.gxf3 O-O 10.Nc3 Nbd7 11.e4 dxe4 12.fxe4 e5 13.dxe5 Nxe5 14.Qg3 Ng6 15.Qg2 Nh4 16.Qg5 Nf3+ 17.Kh1 Nxg5 18.h4 Ngxe4 0-1",
+      "moment_cle": "16...Nf3+ 17.Kh1 Nxg5 : fourchette de cavalier gagnant la dame",
+      "coups_illegaux": 0,
+      "pgn": "games/lichess_win_0ofezMba.pgn",
+      "visuels": [
+        "figures/lichess_win.gif",
+        "figures/lichess_win_fork.png",
+        "figures/hero_lichess.png"
+      ]
+    },
+    "incident_rate_limit": {
+      "cause": "~47 workers multiprocessing orphelins (PPID=1) tenant le flux d'événements ouvert",
+      "duree_blocage_h": 19,
+      "correctif": "tuer le groupe de processus (set -m + kill -- -PGID) dans run_lichess_bot.sh"
+    },
+    "architecture_inference": {
+      "principe": "modèle sans état -> 1 serveur (modèle chargé une fois) + N clients UCI légers",
+      "serveur": "infer_server.py (cuda:0, ~2.5 Go, socket Unix)",
+      "client": "engine_client.py (relaie les coups, aucun modèle chargé)",
+      "concurrency": 50,
+      "matchmaking_allow_during_games": true,
+      "gain": "coût mémoire constant quel que soit le nombre de parties (avant : ~2.5 Go/partie)",
+      "doc": "INFERENCE_SERVER.md"
+    },
+    "partie_remarquable_C0kval": {
+      "url": "https://lichess.org/q1VZ9CcF",
+      "resultat": "C0kval (1748) 0-1 philidor-142M",
+      "longueur": "60 coups (120 demi-coups)",
+      "fin": "mat : 60...Qb8#",
+      "particularite": "finale complète, deux promotions (51...c1=Q+, 55...b1=Q+), menée jusqu'au mat",
+      "pgn": "games/lichess_win2_C0kval.pgn",
+      "visuels": [
+        "figures/lichess_win2.gif",
+        "figures/lichess_win2_mat.png",
+        "figures/hero_rating.png"
+      ]
+    },
+    "classement_lichess": {
+      "note": "classements ÉTABLIS ; le Rapid est la référence honnête (le temps y pèse peu)",
+      "bullet": {
+        "elo": 1646,
+        "parties": 36,
+        "statut": "établi"
+      },
+      "blitz": {
+        "elo": 1671,
+        "parties": 55,
+        "statut": "établi"
+      },
+      "rapid": {
+        "elo": 1702,
+        "parties": 96,
+        "statut": "établi"
+      },
+      "bilan_total": {
+        "parties": 206,
+        "victoires": 63,
+        "nulles": 19,
+        "defaites": 124
+      },
+      "correction": "le 1908 Rapid annoncé le 2026-08-08 était un artefact de petit échantillon (14 parties) ; stabilisé à 1702 sur 96 parties",
+      "observation": "les trois classements sont serrés (1646/1671/1702) : l'avantage 'ne flague jamais' n'a PAS gonflé bullet/blitz au-dessus du rapid",
+      "source": "API Lichess /api/user/philidor-142M, perfs"
+    }
+  },
+  "export_et_deploiement": {
+    "date_utc": "2026-08-04T19:20:00Z",
+    "conversion_huggingface": {
+      "statut": "vérifiée et fonctionnelle",
+      "format_cible": "LlamaForCausalLM (transformers 5.14.1)",
+      "pourquoi_llama": "En choisissant séparément pre-norm, RMSNorm, RoPE et SwiGLU — quatre décisions justifiées indépendamment — on a reconstruit exactement l'architecture de Llama. La conversion n'est donc pas une approximation mais un renommage.",
+      "seule_operation_non_triviale": "notre projection q/k/v est une matrice unique 3d x d, fusionnée pour n'avoir qu'un gros produit matriciel ; Llama garde les trois séparées, il faut redécouper",
+      "verification_numerique": {
+        "methode": "mêmes entrées aléatoires passées dans les deux implémentations, comparaison des logits ; le script refuse d'écrire au-delà de 1e-4",
+        "ecart_max_longueur_1": 0.0,
+        "ecart_max_longueur_7": 0.0,
+        "ecart_max_longueur_64": 0.0,
+        "ecart_max_longueur_256": 0.0,
+        "conclusion": "identité bit à bit, pas approximation"
+      },
+      "tokenizer": {
+        "type": "WordLevel, séparation sur les espaces",
+        "taille": 1971,
+        "usage": "le modèle se pilote en écrivant les coups séparés par des espaces",
+        "piege_rencontre": "le décodeur Fuse recolle les tokens sans séparateur ; comme les coups UCI font 4 ou 5 caractères, la chaîne devient impossible à redécouper. Il faut un décodeur qui joigne par des espaces."
+      },
+      "test_bout_en_bout": {
+        "prompt": "e2e4 e7e5 g1f3 b8c6 f1b5",
+        "generation": "a7a6 b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6 c2c3 e8g8 h2h3 c8b7 d2d4",
+        "coups_legaux": 19,
+        "coups_illegaux": 0,
+        "identification": "variante fermée de la partie espagnole, ligne théorique connue"
+      },
+      "taille_fichier_mo": 209.6,
+      "note_masque": "ATTENTION : le mode transformers n'a PAS de masque de légalité. Environ 2 % des coups générés sont illégaux. Pour jouer, utiliser engine.py."
+    },
+    "conversion_gguf_llamacpp": {
+      "statut": "bloqué, contournable mais déconseillé",
+      "blocage": "convert_hf_to_gguf.py identifie les pré-tokenizers par empreinte cryptographique et ne reconnaît pas un vocabulaire de coups d'échecs. La chaîne de repli sentencepiece -> llama_hf -> gpt2 échoue à la dernière étape avec NotImplementedError.",
+      "contournement": "ajouter l'empreinte dans conversion/base.py de llama.cpp (3 lignes)",
+      "non_fait_car": "modifierait le clone llama.cpp de l'utilisateur sans son accord, et l'intérêt est faible : ce mode perdrait le masque de légalité alors que le modèle de 142 M répond déjà en millisecondes en PyTorch",
+      "gguf_produit": "non mesuré"
+    },
+    "interface_de_jeu": {
+      "fichier": "play.py",
+      "fonctions": "échiquier unicode, coups en notation courante ou UCI, commande 'top' affichant les probabilités du modèle sur les coups légaux",
+      "demonstration_mesuree": {
+        "position": "après 1.e4 c5 (le modèle a répondu c5 à 1.e4)",
+        "distribution_du_modele": {
+          "Nf3": 0.547,
+          "Nc3": 0.108,
+          "c3": 0.089,
+          "d4": 0.074,
+          "Bc4": 0.058,
+          "f4": 0.042
+        },
+        "interpretation": "Sicilienne ouverte, variante fermée, Alapine, poussée centrale, fou italien, attaque Grand Prix — les six grandes familles de réponses à la Sicilienne, dans leur ordre de popularité réel",
+        "reserve": "ces probabilités sont renormalisées APRÈS masquage des coups illégaux ; elles disent ce que le modèle préfère parmi le possible, pas ce qu'il proposerait sans garde-fou"
+      }
+    }
+  },
+  "run2_configuration": {
+    "statut": "en cours",
+    "date_lancement_utc": "2026-08-04T18:59:30Z",
+    "modele": {
+      "n_layer": 20,
+      "n_embd": 768,
+      "n_head": 12,
+      "mlp_hidden": 2048,
+      "parametres_non_embedding": 141589248,
+      "flops_par_token": 896721408
+    },
+    "donnees": {
+      "mois": [
+        "2026-04",
+        "2026-05",
+        "2026-06",
+        "2026-07"
+      ],
+      "tokens_estimes": 3060000000.0,
+      "tokens_par_parametre": 21.6
+    },
+    "batch": {
+      "micro_batch": 80,
+      "grad_accum": 2,
+      "tokens_par_step": 40960,
+      "justification": "batch 96 atteint 22.8 Go de pic sur 24, batch 80 tombe à 19.3 Go pour un débit identique (34 598 contre 34 884 tokens/s). La marge de sécurité est gratuite."
+    },
+    "mesures_prealables": {
+      "methode": "3 itérations avant+arrière sur données aléatoires, pic mémoire relevé",
+      "batch_48": {
+        "pic_go": 12.3,
+        "tokens_s": 27255,
+        "mfu": 0.389
+      },
+      "batch_64": {
+        "pic_go": 15.8,
+        "tokens_s": 33336,
+        "mfu": 0.476
+      },
+      "batch_80": {
+        "pic_go": 19.3,
+        "tokens_s": 34598,
+        "mfu": 0.494
+      },
+      "batch_96": {
+        "pic_go": 22.8,
+        "tokens_s": 34884,
+        "mfu": 0.498
+      },
+      "note": "mesures SANS torch.compile ; le run réel l'active"
+    },
+    "duree_estimee_h": 20,
+    "choix_du_nombre_de_mois": {
+      "question": "pourquoi 4 mois et pas 5 ou 6 ?",
+      "reponse": "aucune limite technique. Le coût est du temps : à modèle redimensionné, 3 mois = 14.7 h, 4 mois = 23.0 h, 5 mois = 41.3 h, 6 mois = 57.8 h. Le choix initial de 3 mois venait d'une hypothèse tacite de budget d'une nuit, jamais vérifiée auprès de l'utilisateur.",
+      "clarification_chinchilla": "ajouter des données à modèle fixe ne rapproche pas de l'optimum de Chinchilla, il le dépasse. Chinchilla dit comment répartir un budget de calcul DONNÉ. Sur-entraîner donne un meilleur modèle, seulement moins efficace par FLOP — c'est ce que font Llama et consorts, dont le coût dominant est l'inférence et non l'entraînement."
+    },
+    "archivage_run1": {
+      "chemin": "/mnt/ia-data/fine-tuning/chess/archive_run1/",
+      "contenu": [
+        "run1_best.pt",
+        "vocab.json",
+        "eval_final.json",
+        "elo_report.json",
+        "elo_ladder.json",
+        "run1_metrics.csv",
+        "run1_train_summary.json"
+      ],
+      "protection": "chmod -w",
+      "raison": "run1 doit rester exploitable quoi qu'il arrive à run2"
+    }
+  },
+  "comparaison_run1_run2": {
+    "date_utc": "2026-08-05T08:00:00Z",
+    "statut": "partielle — run2 est à 66 % de son entraînement",
+    "protocole": "mêmes échantillons, même température (1.0), mêmes tailles d'échantillon (2000 positions) ; comparaison faite à NOMBRE DE TOKENS VUS ÉGAL, ce qui neutralise l'effet du volume de données pour ne garder que celui de la taille du modèle",
+    "run1": {
+      "parametres": 51397120,
+      "points": [
+        {
+          "step": 1000,
+          "tokens_vus": 49152000,
+          "legalite": 0.851,
+          "accord_top1": 0.3785
+        },
+        {
+          "step": 2000,
+          "tokens_vus": 98304000,
+          "legalite": 0.9155,
+          "accord_top1": 0.438
+        },
+        {
+          "step": 3000,
+          "tokens_vus": 147456000,
+          "legalite": 0.9475,
+          "accord_top1": 0.4635
+        },
+        {
+          "step": 4000,
+          "tokens_vus": 196608000,
+          "legalite": 0.951,
+          "accord_top1": 0.4655
+        },
+        {
+          "step": 5000,
+          "tokens_vus": 245760000,
+          "legalite": 0.955,
+          "accord_top1": 0.4775
+        },
+        {
+          "step": 6000,
+          "tokens_vus": 294912000,
+          "legalite": 0.966,
+          "accord_top1": 0.48
+        },
+        {
+          "step": 7000,
+          "tokens_vus": 344064000,
+          "legalite": 0.9655,
+          "accord_top1": 0.482
+        },
+        {
+          "step": 8000,
+          "tokens_vus": 393216000,
+          "legalite": 0.969,
+          "accord_top1": 0.491
+        },
+        {
+          "step": 9000,
+          "tokens_vus": 442368000,
+          "legalite": 0.9695,
+          "accord_top1": 0.505
+        },
+        {
+          "step": 10000,
+          "tokens_vus": 491520000,
+          "legalite": 0.9725,
+          "accord_top1": 0.509
+        },
+        {
+          "step": 11000,
+          "tokens_vus": 540672000,
+          "legalite": 0.973,
+          "accord_top1": 0.5015
+        },
+        {
+          "step": 12000,
+          "tokens_vus": 589824000,
+          "legalite": 0.9755,
+          "accord_top1": 0.5095
+        },
+        {
+          "step": 13000,
+          "tokens_vus": 638976000,
+          "legalite": 0.978,
+          "accord_top1": 0.515
+        },
+        {
+          "step": 14000,
+          "tokens_vus": 688128000,
+          "legalite": 0.9785,
+          "accord_top1": 0.515
+        },
+        {
+          "step": 15000,
+          "tokens_vus": 737280000,
+          "legalite": 0.9785,
+          "accord_top1": 0.5165
+        },
+        {
+          "step": 16000,
+          "tokens_vus": 786432000,
+          "legalite": 0.9775,
+          "accord_top1": 0.5185
+        }
+      ]
+    },
+    "run2": {
+      "parametres": 141589248,
+      "points": [
+        {
+          "step": 5000,
+          "tokens_vus": 204800000,
+          "legalite": 0.9505,
+          "accord_top1": 0.492
+        },
+        {
+          "step": 10000,
+          "tokens_vus": 409600000,
+          "legalite": 0.971,
+          "accord_top1": 0.503
+        },
+        {
+          "step": 15000,
+          "tokens_vus": 614400000,
+          "legalite": 0.9735,
+          "accord_top1": 0.5275
+        },
+        {
+          "step": 20000,
+          "tokens_vus": 819200000,
+          "legalite": 0.974,
+          "accord_top1": 0.538
+        },
+        {
+          "step": 25000,
+          "tokens_vus": 1024000000,
+          "legalite": 0.982,
+          "accord_top1": 0.5375
+        },
+        {
+          "step": 30000,
+          "tokens_vus": 1228800000,
+          "legalite": 0.979,
+          "accord_top1": 0.551
+        },
+        {
+          "step": 35000,
+          "tokens_vus": 1433600000,
+          "legalite": 0.9785,
+          "accord_top1": 0.548
+        },
+        {
+          "step": 40000,
+          "tokens_vus": 1638400000,
+          "legalite": 0.9805,
+          "accord_top1": 0.549
+        },
+        {
+          "step": 45000,
+          "tokens_vus": 1843200000,
+          "legalite": 0.9825,
+          "accord_top1": 0.5635
+        }
+      ]
+    },
+    "resultat_principal": {
+      "legalite": "indiscernable entre les deux modèles. À 205, 410, 614 et 819 M tokens, les écarts sont dans le bruit et parfois en faveur du petit modèle. Les deux saturent vers 98 %.",
+      "accord_humain_top1": "écart net et constant de 2 à 3 points en faveur du gros modèle, à tous les niveaux, sans exception",
+      "interpretation": "Apprendre les règles est une tâche facile qu'un petit modèle sature : les règles des échecs sont un système fini, régulier et sans exception, dont les régularités sont extraites en ~250 M tokens. Le plafond n'est pas dans le modèle, il est dans la tâche. Prédire QUEL coup un humain jouerait est d'une autre nature — du jugement plutôt que de la mécanique — et absorbe toute la capacité qu'on lui donne. La taille n'achète pas la connaissance des règles, elle achète le discernement.",
+      "consequence": "les 97.86 % de run1 ne sont pas limités par la petitesse du modèle mais par la tâche telle qu'elle est posée ; un modèle dix fois plus gros n'irait probablement pas beaucoup plus loin sans changer la représentation, l'objectif, ou ajouter une recherche"
+    },
+    "avertissement_methodologique": {
+      "incident": "le watcher de run2 avait d'abord été lancé à température 0.6 alors que celui de run1 tournait à 1.0. run2 affichait alors 99.20 % puis 99.35 % contre 97.86 % pour run1.",
+      "consequence_evitee": "cet écart, en grande partie artificiel, aurait conduit à la conclusion INVERSE : un gain spectaculaire de l'échelle sur la légalité. Les mesures à 0.6 sont conservées à part dans logs/temp06_run2/ et exclues de toute comparaison.",
+      "regle": "la température n'est pas un paramètre du modèle mais de la MESURE. Comparer deux expériences exige que tout le protocole soit identique, y compris les réglages qui semblent secondaires."
+    }
+  },
+  "duel_qwen": {
+    "date_utc": "2026-08-05T18:01:41Z",
+    "adversaire": {
+      "nom": "Qwen3.6-35B-A3B",
+      "temperature": 0.6,
+      "tentatives_par_coup": 3,
+      "raisonnement_active": false,
+      "note_raisonnement": "le bloc de reflexion de Qwen3 est desactive : il coute 7.7 s par coup contre 0.4 s, pour une reponse identique sur les positions testees"
+    },
+    "protocole": {
+      "parties": 100,
+      "couleurs": "alternées",
+      "demi_coups_aleatoires": 2,
+      "note_legalite": "le taux de légalité ne compte QUE la première tentative de chaque coup ; accorder des essais puis mesurer le meilleur fausserait la comparaison avec notre modèle, qui n'en a qu'un",
+      "note_masque": "la liste des coups légaux n'est PAS fournie à l'adversaire — la fournir reviendrait à lui offrir le masque que notre modèle n'a pas non plus en génération libre"
+    },
+    "resultat_parties": {
+      "victoires_notre_modele": 100,
+      "nulles": 0,
+      "defaites": 0,
+      "terminaisons": {
+        "adversaire_illegal": 98,
+        "checkmate": 2
+      },
+      "LECTURE_HONNETE": "98 des 100 victoires sont des forfaits : Qwen a épuisé ses quatre tentatives sans produire de coup jouable. Seules 2 parties sont allées jusqu'au mat. Notre modèle n'a donc PAS battu Qwen aux échecs — Qwen n'a pas réussi à jouer aux échecs. Ne pas présenter ce 100-0 comme une victoire au jeu."
+    },
+    "legalite_comparee": {
+      "methode": "même question aux deux : la partie en cours, un coup demandé, aucune liste de coups légaux fournie, aucune seconde chance ; le taux de Qwen ne compte que sa PREMIÈRE tentative",
+      "notre_modele_142M": 0.9885,
+      "notre_modele_51M": 0.9786,
+      "qwen_35B": 0.6539,
+      "qwen_ic95": [
+        0.61734,
+        0.68873
+      ],
+      "qwen_coups_demandes": 679,
+      "qwen_detail": {
+        "uci_legal": 430,
+        "uci_illegal": 235,
+        "san_legal": 14,
+        "illisible": 0
+      },
+      "rapport_de_taille": "250x",
+      "commentaire": "Zéro réponse illisible : Qwen comprend la consigne et répond toujours au bon format. Il ne se trompe pas de tâche, il se trompe de coup. Un modèle 250 fois plus gros produit trois fois plus de coups illégaux."
+    },
+    "decision_protocole": {
+      "raisonnement_desactive": true,
+      "justification": "Qwen3 produit par défaut ~530 tokens de réflexion par coup, soit 7.7 s — neuf heures pour 100 parties. enable_thinking=false donne la même réponse en 0.4 s, dix-neuf fois plus vite. La réponse mesurée est identique sur les positions testées, et le protocole reste plus généreux que celui de notre modèle qui n'a qu'un passage avant sans réflexion ni tentative supplémentaire.",
+      "pour_refaire_avec_raisonnement": "python qwen_match.py --avec-raisonnement"
+    },
+    "duree_s": 200.3
+  },
+  "duel_run1_run2": {
+    "date_utc": "2026-08-05T16:13:00Z",
+    "protocole": "400 parties, couleurs alternées, température 0, 4 demi-coups aléatoires",
+    "run2_victoires": 305,
+    "nulles": 63,
+    "run1_victoires": 32,
+    "score_run2": 0.8413,
+    "elo_diff": 289.7,
+    "marge_erreur": 39.5,
+    "terminaisons": {
+      "checkmate": 337,
+      "threefold_repetition": 47,
+      "stalemate": 13,
+      "insufficient_material": 3
+    },
+    "commentaire": "337 parties sur 400 finissent par un mat, aucune par coup illégal : avec le masque de légalité et à température 0, les deux modèles mènent de vraies parties jusqu'au bout. Sur la LÉGALITÉ les deux modèles étaient indiscernables à nombre de tokens égal ; sur la FORCE DE JEU l'écart est de 290 points d'Elo. Connaître les règles ne fait pas un bon joueur."
+  },
+  "run2_resultats_finaux": {
+    "date_utc": "2026-08-05T17:44:02Z",
+    "step": 77787,
+    "tokens_vus": 3186155520,
+    "temperature": 1.0,
+    "legalite": 0.9885,
+    "legalite_ic95": [
+      0.98693,
+      0.98989
+    ],
+    "accord_top1": 0.55485,
+    "accord_top5": 0.9195,
+    "tests_par_regle": {
+      "roque": 1.0,
+      "en_passant": 1.0,
+      "promotion": 0.998,
+      "echec": 0.986
+    },
+    "comparaison_run1": "97.86 % -> 98.85 % de légalité, intervalles disjoints donc gain significatif ; taux d'erreur presque divisé par deux. 51.42 % -> 55.48 % d'accord top-1."
+  }
+}

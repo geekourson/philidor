@@ -1,0 +1,19 @@
+# Versions effectivement utilisées pour produire les résultats publiés.
+# PyTorch s'installe à part, avec l'index correspondant à votre CUDA :
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+
+torch==2.13.0
+python-chess==1.11.2
+zstandard==0.25.0
+numpy==2.2.6
+tqdm==4.70.0
+
+# Graphiques (optionnel : uniquement pour plots.py et plots_article.py)
+matplotlib==3.10.9
+
+# Export Hugging Face (optionnel : uniquement pour convert_to_hf.py)
+transformers==5.14.1
+safetensors==0.8.0
+
+# GIF d'une partie (optionnel : uniquement pour game_gif.py)
+pillow==12.3.0
