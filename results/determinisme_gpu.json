@@ -1,0 +1,20 @@
+{
+  "bf16": {
+    "positions": 500,
+    "desaccords": 2,
+    "taux_desaccord": 0.004,
+    "ecart_logit_median": 0.0625,
+    "ecart_logit_max": 0.125,
+    "marge_mediane_si_desaccord": 0.0625,
+    "marge_mediane_si_accord": 1.0625
+  },
+  "fp32": {
+    "positions": 500,
+    "desaccords": 0,
+    "taux_desaccord": 0.0,
+    "ecart_logit_median": 2.86102294921875e-06,
+    "ecart_logit_max": 1.1444091796875e-05,
+    "marge_mediane_si_desaccord": NaN,
+    "marge_mediane_si_accord": 1.0567293167114258
+  }
+}

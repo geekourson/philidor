@@ -207,6 +207,50 @@ All raw measurements, with their protocols and confidence intervals, are in [`ME
 
 ---
 
+### Determinism across two GPUs
+
+The engine is deterministic: temperature zero, frozen weights, fixed seeds, imposed
+openings. Replaying the same 200-game duel on the other card still moved the result.
+
+`determinisme_gpu.py` measures where that comes from, position by position. It loads the
+same checkpoint twice, once per card, masks the logits to the legal moves and compares the
+argmax on 500 validation positions the model has never seen. The same run is repeated in
+fp32 as a control.
+
+```console
+$ python determinisme_gpu.py --ckpt checkpoints/run2_best.pt --n 500 --a cuda:0 --b cuda:1
+  cuda:0 : NVIDIA GeForce RTX 3090
+  cuda:1 : NVIDIA GeForce RTX 3060
+
+                                    bf16        fp32
+positions compared                   500         500
+different move between cards     2 (0.40%)    0 (0.00%)
+logit gap, median                 6.25e-02    2.86e-06
+logit gap, maximum                1.25e-01    1.14e-05
+margin 1st/2nd IF disagreement      0.0625        ---
+margin 1st/2nd if agreement         1.0625      1.0567
+```
+
+bf16 keeps eight bits of mantissa, which at the scale of these logits gives a quantisation
+step of **0.0625**, or 1/16. The two disagreements have a first-to-second margin of exactly
+**0.0 and 0.0625**, zero or one step of that grid, against a median of 1.0625 when the cards
+agree. The cards never make a mistake: they break ties differently between moves the model
+rates equal at the precision it computes in. In fp32 the gap falls by a factor of twenty
+thousand and the disagreement disappears.
+
+The non-zero fp32 residual (2.86e-06) is the direct evidence that the two cards do not run
+the same operations in the same order. bf16 does not create the gap, it amplifies it until
+it flips a ranking.
+
+**The rule**: a deterministic engine is not a reproducible engine from one machine to
+another. Both arms of an A/B must run on the same card, otherwise the hardware becomes a
+hidden variable of the experiment.
+
+`plots_determinisme.py` draws the figure from `results/desaccord_exemple.json`, a real
+disagreement case: same position, `Rxf7` on one card, `Ne4+` on the other.
+
+---
+
 ## The files
 
 ### The pipeline
@@ -241,7 +285,8 @@ All raw measurements, with their protocols and confidence intervals, are in [`ME
 
 ### Plots
 
-`plots.py` for training curves, `plots_article.py` for one-off visuals, `game_gif.py` to animate a game.
+`plots.py` for training curves, `plots_article.py` for one-off visuals, `game_gif.py` to animate a game,
+`plots_determinisme.py` for the cross-GPU figure.
 
 ---
 
@@ -255,6 +300,7 @@ All raw measurements, with their protocols and confidence intervals, are in [`ME
 | Abnormally low loss | 5.97 instead of 7.59 at init | look for a data leak |
 | Different temperatures between two measurements | artificial gap attributed to the model | one temperature per metric |
 | Rapid bot restarts | `429` lasting over an hour | slow watchdog, on real crashes only |
+| Same weights, two GPUs | 50 Elo gap between two runs of the same duel | run both arms on one card |
 
 Each one is told in detail in [the article](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend).
 
@@ -483,6 +529,51 @@ Toutes les mesures brutes, avec leurs protocoles et leurs intervalles de confian
 
 ---
 
+### Déterminisme entre deux GPU
+
+Le moteur est déterministe : température zéro, poids figés, graines fixées, ouvertures
+imposées. Rejouer le même duel de 200 parties sur l'autre carte déplaçait quand même le
+résultat.
+
+`determinisme_gpu.py` mesure d'où ça vient, position par position. Le même checkpoint est
+chargé deux fois, une par carte, les logits sont masqués aux coups légaux et on compare
+l'argmax sur 500 positions de validation que le modèle n'a jamais vues. Le tout est répété
+en fp32 comme témoin.
+
+```console
+$ python determinisme_gpu.py --ckpt checkpoints/run2_best.pt --n 500 --a cuda:0 --b cuda:1
+  cuda:0 : NVIDIA GeForce RTX 3090
+  cuda:1 : NVIDIA GeForce RTX 3060
+
+                                    bf16        fp32
+positions comparees                  500         500
+coups differents entre cartes    2 (0.40%)    0 (0.00%)
+ecart de logit, mediane           6.25e-02    2.86e-06
+ecart de logit, maximum           1.25e-01    1.14e-05
+marge 1er/2e SI desaccord           0.0625        ---
+marge 1er/2e si accord              1.0625      1.0567
+```
+
+Le bf16 ne garde que huit bits de mantisse, ce qui donne à l'échelle de ces logits un pas de
+quantification de **0,0625**, soit 1/16. Les deux désaccords ont une marge entre premier et
+deuxième coup de **0,0 et 0,0625** exactement, zéro ou un seul cran de cette grille, contre
+1,0625 en médiane quand les cartes s'accordent. Les cartes ne se trompent jamais : elles
+départagent différemment des coups que le modèle juge à égalité, à la précision où il
+calcule. En fp32 l'écart tombe d'un facteur vingt mille et le désaccord disparaît.
+
+Le résidu fp32 **non nul** (2,86e-06) est la preuve directe que les deux cartes n'exécutent
+pas les mêmes opérations dans le même ordre. Le bf16 ne crée pas l'écart, il l'amplifie
+jusqu'à faire basculer un classement.
+
+**La règle** : un moteur déterministe n'est pas un moteur reproductible d'une machine à
+l'autre. Les deux bras d'un A/B doivent tourner sur la même carte, sans quoi le matériel
+devient une variable cachée de l'expérience.
+
+`plots_determinisme.py` trace la figure à partir de `results/desaccord_exemple.json`, un cas
+de désaccord réel : même position, `Rxf7` sur une carte, `Ne4+` sur l'autre.
+
+---
+
 ## Les fichiers
 
 ### Le pipeline
@@ -517,7 +608,8 @@ Toutes les mesures brutes, avec leurs protocoles et leurs intervalles de confian
 
 ### Graphiques
 
-`plots.py` pour les courbes de progression, `plots_article.py` pour les visuels ponctuels, `game_gif.py` pour animer une partie.
+`plots.py` pour les courbes de progression, `plots_article.py` pour les visuels ponctuels, `game_gif.py` pour animer une partie,
+`plots_determinisme.py` pour la figure du déterminisme entre cartes.
 
 ---
 
@@ -531,6 +623,7 @@ Toutes les mesures brutes, avec leurs protocoles et leurs intervalles de confian
 | Loss anormalement basse | 5,97 au lieu de 7,59 à l'initialisation | chercher une fuite de données |
 | Températures différentes entre deux mesures | écart artificiel attribué au modèle | une température par métrique |
 | Redémarrages rapprochés du bot | `429` qui dure plus d'une heure | watchdog lent, sur crash réel seulement |
+| Mêmes poids, deux GPU | 50 Elo d'écart entre deux passages du même duel | les deux bras sur une seule carte |
 
 Chacun est raconté en détail dans [l'article](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend).
 
