@@ -5,6 +5,18 @@ checkpoints/
 logs/
 figures/
 # assets/ contient les visuels du README, eux sont versionnés.
+
+# Mesures du diagnostic (juge_recherche/) : seuls les deux jeux de positions et
+# leurs évaluations Stockfish profondeur 18 sont versionnés (des heures de
+# calcul) ; tout le reste se régénère.
+diag/*
+!diag/positions.jsonl
+!diag/stockfish18.jsonl
+!diag/propres_positions.jsonl
+!diag/propres_sf18.jsonl
+# classements de la politique qui ont produit les chiffres publiés
+!diag/modele.jsonl
+!diag/propres_modele.jsonl
 hf/
 
 # Le jeton Lichess ne doit jamais être commité.

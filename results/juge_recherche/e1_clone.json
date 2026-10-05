@@ -1,0 +1,35 @@
+{
+  "a": {
+    "label": "juge",
+    "mode": "juge:5:0.5",
+    "ckpt": "checkpoints/run2_best.pt"
+  },
+  "b": {
+    "label": "juge clone",
+    "mode": "juge:5:0.5",
+    "ckpt": "checkpoints/run2_best.pt"
+  },
+  "protocole": {
+    "parties": 400,
+    "ouvertures_appariees": true,
+    "demi_coups_aleatoires": 4,
+    "couleurs": "alternées",
+    "graine": 1234
+  },
+  "parties": 400,
+  "victoires": 151,
+  "nulles": 98,
+  "defaites": 151,
+  "score": 0.5,
+  "elo_diff": -0.0,
+  "elo_ic95_bas": -29.7,
+  "elo_ic95_haut": 29.7,
+  "marge_erreur": 29.7,
+  "terminaisons": {
+    "checkmate": 302,
+    "threefold_repetition": 70,
+    "stalemate": 18,
+    "insufficient_material": 10
+  },
+  "duree_s": 1620.2
+}

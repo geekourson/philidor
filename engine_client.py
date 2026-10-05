@@ -28,7 +28,7 @@ SOCK = os.environ.get("INFER_SOCKET",
                       "logs/infer.sock")
 
 
-def demander(moves, tentatives=40):
+def demander(moves, pendule=None, tentatives=40):
     """Envoie l'historique au serveur, renvoie le coup. Réessaie si le serveur
     redémarre (le watchdog peut le relancer sous nous)."""
     dernier = None
@@ -37,7 +37,7 @@ def demander(moves, tentatives=40):
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(30)
             s.connect(SOCK)
-            s.sendall((json.dumps({"moves": moves}) + "\n").encode())
+            s.sendall((json.dumps({"moves": moves, **(pendule or {})}) + "\n").encode())
             data = b""
             while not data.endswith(b"\n"):
                 chunk = s.recv(4096)
@@ -66,7 +66,7 @@ def main():
 
         if cmd == "uci":
             print("id name philidor-142M")
-            print("id author billy + claude")
+            print("id author Billy Girboux")
             print("uciok", flush=True)
         elif cmd == "isready":
             print("readyok", flush=True)
@@ -79,7 +79,15 @@ def main():
                 moves = []
             # `position fen ...` non supporté : le modèle a besoin de l'historique
         elif cmd == "go":
-            print(f"bestmove {demander(moves)}", flush=True)
+            # la pendule (ms) sert au serveur à régler l'effort de recherche
+            pendule = {}
+            for cle in ("wtime", "btime", "winc", "binc", "movetime"):
+                if cle in parts:
+                    try:
+                        pendule[cle] = int(parts[parts.index(cle) + 1])
+                    except (ValueError, IndexError):
+                        pass
+            print(f"bestmove {demander(moves, pendule)}", flush=True)
         elif cmd in ("quit", "stop"):
             if cmd == "quit":
                 break

@@ -164,7 +164,7 @@ class ChessEngine:
 
             if cmd == "uci":
                 print(f"id name ChessGPT-{self.ckpt_step}")
-                print("id author billy + claude")
+                print("id author Billy Girboux")
                 print("uciok", flush=True)
 
             elif cmd == "isready":

@@ -1,0 +1,35 @@
+{
+  "a": {
+    "label": "valeur",
+    "mode": "valeur:5:0.25",
+    "ckpt": "checkpoints/run2_best.pt"
+  },
+  "b": {
+    "label": "juge",
+    "mode": "juge:5:0.5",
+    "ckpt": "checkpoints/run2_best.pt"
+  },
+  "protocole": {
+    "parties": 2000,
+    "ouvertures_appariees": true,
+    "demi_coups_aleatoires": 4,
+    "couleurs": "alternées",
+    "graine": 1234
+  },
+  "parties": 2000,
+  "victoires": 950,
+  "nulles": 410,
+  "defaites": 640,
+  "score": 0.5775,
+  "elo_diff": 54.3,
+  "elo_ic95_bas": 40.7,
+  "elo_ic95_haut": 68.1,
+  "marge_erreur": 13.7,
+  "terminaisons": {
+    "stalemate": 53,
+    "checkmate": 1590,
+    "threefold_repetition": 321,
+    "insufficient_material": 36
+  },
+  "duree_s": 11909.1
+}

@@ -1,0 +1,120 @@
+{
+  "positions": 5000,
+  "ecartees": 0,
+  "seuil_cp": 100,
+  "taux_gaffes": {
+    "n": 916,
+    "taux": 0.1832,
+    "ic95": [
+      0.1727,
+      0.1942
+    ]
+  },
+  "perte_moyenne_cp": 1147.7,
+  "perte_mediane_cp": 215,
+  "gaffees": {
+    "n": 916,
+    "top1": {
+      "n": 0,
+      "taux": 0.0,
+      "ic95": [
+        0.0,
+        0.0042
+      ]
+    },
+    "top3": {
+      "n": 472,
+      "taux": 0.5153,
+      "ic95": [
+        0.4829,
+        0.5475
+      ]
+    },
+    "top5": {
+      "n": 655,
+      "taux": 0.7151,
+      "ic95": [
+        0.685,
+        0.7434
+      ]
+    },
+    "top10": {
+      "n": 825,
+      "taux": 0.9007,
+      "ic95": [
+        0.8796,
+        0.9184
+      ]
+    },
+    "rang_moyen": 5.0,
+    "rang_median": 3,
+    "sans_rang": 0
+  },
+  "non_gaffees": {
+    "n": 4084,
+    "top1": {
+      "n": 2252,
+      "taux": 0.5514,
+      "ic95": [
+        0.5361,
+        0.5666
+      ]
+    },
+    "top3": {
+      "n": 3058,
+      "taux": 0.7488,
+      "ic95": [
+        0.7352,
+        0.7618
+      ]
+    },
+    "top5": {
+      "n": 3445,
+      "taux": 0.8435,
+      "ic95": [
+        0.8321,
+        0.8544
+      ]
+    },
+    "top10": {
+      "n": 3846,
+      "taux": 0.9417,
+      "ic95": [
+        0.9341,
+        0.9485
+      ]
+    },
+    "rang_moyen": 3.1,
+    "rang_median": 1,
+    "sans_rang": 0
+  },
+  "selecteur_parfait": {
+    "k=3": {
+      "gaffes_recuperables": 472,
+      "part_des_gaffes": 0.5153,
+      "ic95": [
+        0.4829,
+        0.5475
+      ],
+      "taux_gaffes_restant": 0.0888
+    },
+    "k=5": {
+      "gaffes_recuperables": 655,
+      "part_des_gaffes": 0.7151,
+      "ic95": [
+        0.685,
+        0.7434
+      ],
+      "taux_gaffes_restant": 0.0522
+    },
+    "k=10": {
+      "gaffes_recuperables": 825,
+      "part_des_gaffes": 0.9007,
+      "ic95": [
+        0.8796,
+        0.9184
+      ],
+      "taux_gaffes_restant": 0.0182
+    }
+  }
+}

@@ -35,6 +35,17 @@ SOCK=$LOGS/infer.sock
 CKPT="$REPO/checkpoints/run2_best.pt"
 VOCAB="$REPO/data/vocab.json"
 DEVICE=cuda:0
+# Juge et recherche (juge_recherche/, voir le README). Actifs seulement si le
+# fichier du juge existe ; sinon le bot est la politique seule, une passe.
+#   VALEUR      poids du juge (juge_recherche/valeur_train.py)
+#   RECHERCHE   plafond de simulations par coup (0 = juge sans recherche)
+# Le budget par coup suit la pendule (juge_recherche/budget_pendule.py) ; le
+# plafond se change à chaud dans $LOGS/sims_max.txt, sans redémarrer.
+VALEUR="${VALEUR-$REPO/checkpoints/valeur.pt}"
+VALEUR_K="${VALEUR_K:-5}"
+VALEUR_ALPHA="${VALEUR_ALPHA:-0.25}"
+RECHERCHE="${RECHERCHE:-1024}"
+export PHILIDOR_SIMS_MAX="${PHILIDOR_SIMS_MAX:-$LOGS/sims_max.txt}"
 RESTART_DELAY=120
 
 srv_pid=""
@@ -69,8 +80,13 @@ demarrer_serveur() {
   for p in $(pgrep -f 'infer_server\.py' 2>/dev/null); do kill -KILL "$p" 2>/dev/null; done
   rm -f "$SOCK" "$SOCK.ready"
   echo "[watchdog $(date -u +%H:%M:%S)] démarrage du serveur d'inférence ($DEVICE)"
+  local extra=()
+  if [ -n "$VALEUR" ] && [ -f "$VALEUR" ]; then
+    extra=(--valeur "$VALEUR" --k "$VALEUR_K" --alpha "$VALEUR_ALPHA")
+    [ "$RECHERCHE" -gt 0 ] && extra+=(--recherche "$RECHERCHE" --graphes)
+  fi
   ( cd "$REPO" && setsid "$PY" infer_server.py --ckpt "$CKPT" --vocab "$VOCAB" \
-      --device "$DEVICE" --socket "$SOCK" >> "$SRV_LOG" 2>&1 ) &
+      --device "$DEVICE" --socket "$SOCK" "${extra[@]}" >> "$SRV_LOG" 2>&1 ) &
   srv_pid=$!
   for _ in $(seq 1 90); do          # jusqu'à ~90 s pour charger le modèle
     [ -e "$SOCK.ready" ] && { echo "[watchdog $(date -u +%H:%M:%S)] serveur prêt"; return 0; }

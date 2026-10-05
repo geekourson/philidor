@@ -1,0 +1,36 @@
+{
+  "a": {
+    "label": "selecteur p4",
+    "mode": "sfsel:5:4",
+    "ckpt": "checkpoints/run2_best.pt"
+  },
+  "b": {
+    "label": "selecteur p4 clone",
+    "mode": "sfsel:5:4",
+    "ckpt": "checkpoints/run2_best.pt"
+  },
+  "protocole": {
+    "parties": 400,
+    "ouvertures_appariees": true,
+    "demi_coups_aleatoires": 4,
+    "couleurs": "alternées",
+    "graine": 1234
+  },
+  "parties": 400,
+  "victoires": 130,
+  "nulles": 140,
+  "defaites": 130,
+  "score": 0.5,
+  "elo_diff": -0.0,
+  "elo_ic95_bas": -27.5,
+  "elo_ic95_haut": 27.5,
+  "marge_erreur": 27.5,
+  "terminaisons": {
+    "checkmate": 260,
+    "insufficient_material": 10,
+    "threefold_repetition": 126,
+    "stalemate": 2,
+    "fifty_moves": 2
+  },
+  "duree_s": 2510.6
+}

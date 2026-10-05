@@ -15,6 +15,8 @@ It never sees a board. It receives a sequence of moves in UCI notation, `e2e4 e7
 
 **[Read the full article](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend)** (in French): the story of the project, the choices, the measurements, and the mistakes, including one that nearly cost fifteen hours of compute.
 
+**[Part two: from 1700 to 2000](https://www.billygirboux.fr/fr/blog/philidor-1700-a-2000)** (in French): an intuition, a judge and a search take the bot past 2000 on Lichess. [Everything is below](#from-1700-to-2000-an-intuition-a-judge-and-a-search), in [`juge_recherche/`](juge_recherche/).
+
 > Code comments are in French. The English README below covers everything you need to reproduce the experiment.
 
 ---
@@ -33,7 +35,7 @@ Full replayable game: [lichess.org/delDiQ5h](https://lichess.org/delDiQ5h)
 
 ## What this repository contains
 
-Everything needed to redo the experiment end to end: build the vocabulary, filter a Lichess dump, train the model, evaluate it, pit it against Stockfish, and put it online as a bot.
+Everything needed to redo the experiment end to end: build the vocabulary, filter a Lichess dump, train the model, evaluate it, pit it against Stockfish, and put it online as a bot. Then the second step: a judge and a search that take it from 1700 to 2000 ([below](#from-1700-to-2000-an-intuition-a-judge-and-a-search)).
 
 No exotic dependencies. Plain PyTorch, no training framework: every line of the loop is readable.
 
@@ -251,6 +253,135 @@ disagreement case: same position, `Rxf7` on one card, `Ne4+` on the other.
 
 ---
 
+## From 1700 to 2000: an intuition, a judge, and a search
+
+**[Read the second article](https://www.billygirboux.fr/fr/blog/philidor-1700-a-2000)** (in French). Everything it describes is in [`juge_recherche/`](juge_recherche/), with the raw outputs in [`results/juge_recherche/`](results/juge_recherche/).
+
+The 142 M model plateaued at 1700. Weeks of attempts to make it imitate better (bigger, more data, Stockfish moves as targets, reasoning tokens, latent loops) brought nothing. A diagnostic showed why: **it plays the most probable move, not the best one**. On 5,000 unseen middlegame positions it blunders 18.3 % of the time (humans: 20.7 % on the same positions), yet when it blunders the best move was among its first five ideas 71.5 % of the time, it "sees" pieces under attack (linear probe, AUC 0.992), and 73 % of its blunders are visible within 4 plies. The problem is the choice, not the knowledge.
+
+So the bot became **two transformers of the same architecture and a search**:
+
+| Part | Role | What it is |
+|---|---|---|
+| **Policy** | proposes moves (the intuition) | the 142 M model, **unchanged** |
+| **Judge** | says who is winning after a move | a copy of the same 142 M transformer, fine-tuned on the Stockfish evaluations that Lichess stores in annotated games (`[%eval]`) |
+| **Search** | makes them think ahead | PUCT, as in AlphaZero: the policy chooses where to look, the judge scores the positions reached |
+
+No opening book, no hand-written evaluation. **Stockfish never plays inside the bot**: it is distilled into the judge through the `[%eval]` annotations, and used only to measure.
+
+### What each step is worth
+
+Every duel uses paired openings (each random opening is played twice, colours swapped) and a clone control, with 95 % intervals.
+
+| Step | Offline blunder rate (≥ 100 cp, 5,000 positions) | Duel |
+|---|---|---|
+| Policy alone (argmax) | 18.32 % | reference |
+| Ceiling: Stockfish depth 1 / 4 / 12 choosing in the top-5 | 14.94 / 11.88 / 5.14 % | +126.8 / +329.1 / +599.4 vs policy |
+| Judge v1: small head on the frozen trunk (1.5 M candidates) | 15.72 % | **+51.8** [+38.3 ; +65.5] vs policy |
+| Judge v2: full copy, 1 month of evaluations (67.8 M) | 15.28 % | **+129.9** [+115.8 ; +144.5] vs policy; +54.3 vs judge v1 |
+| Judge v2 retrained on 4 months (412 M evaluations) | 14.30 % | +33.1 [+19.7 ; +46.6] vs 1 month |
+| Search, 16 / 64 / 256 simulations (1-month judge) | 13.74 / 11.64 / 8.10 % | 64 sims: **+381.7** [+351.8 ; +416.3] vs policy + judge |
+| Search, 256 vs 64 simulations (4-month judge, as below) | 10.98 % at 64 | **+415.6** [+368.2 ; +477.1] |
+| Search, 1024 vs 256 simulations | 6.90 vs 9.50 % (1,000 positions) | **+326.4** [+278.6 ; +386.5] |
+| Search, 4096 vs 1024 simulations | 4.75 vs 4.75 % (400 positions) | nothing measurable: the judge is now the limit |
+| Distillation: teaching the policy the search's choice, in one pass | −0.1 to −1.2 point | nothing measurable (negative result) |
+
+On Lichess (`philidor-142M`):
+
+| Date | Engine | Bullet | Blitz | Rapid | Classical |
+|---|---|---|---|---|---|
+| 9 Aug | policy alone | 1646 | 1671 | 1702 | |
+| 30 Sep | search + CUDA graphs | 2020 | 1975 | 1996 | 1930 |
+| 5 Oct | same | 2082 | 2103 | 2137 | 2041 |
+
+### Reproducing it
+
+Run everything from the repository root. You need the 142 M checkpoint produced by the pipeline above (`checkpoints/run2_best.pt`), the Lichess monthly dumps in `data/` for the judge, and a Stockfish binary for the measurements only (`export STOCKFISH=/path/to/stockfish`).
+
+The two measurement sets are provided, with the depth-18 evaluation of every legal move (hours of compute): `diag/positions.jsonl` + `diag/stockfish18.jsonl` (5,000 human middlegame positions, never seen in training) and `diag/propres_positions.jsonl` + `diag/propres_sf18.jsonl` (4,670 positions from the bot's own games). Settings are always tuned on the bot's positions and reported on the other set.
+
+**1. Diagnostic and ceiling**
+
+```bash
+python -m juge_recherche.diag_modele                     # the policy's ranking on the 5,000 positions
+python -m juge_recherche.diag_modele --positions diag/propres_positions.jsonl --out diag/propres_modele.jsonl
+python -m juge_recherche.diag_analyse                    # blunder rate, best move in the top-5
+python -m juge_recherche.diag_profondeur                 # at which depth each blunder becomes visible
+python -m juge_recherche.diag_sondes_positions && python -m juge_recherche.diag_sondes   # linear probes
+python -m juge_recherche.diag_plafond                    # ceiling: Stockfish choosing in the top-5
+# where the bot loses: its rated games exported from the Lichess API
+curl -H "Accept: application/x-ndjson" "https://lichess.org/api/games/user/philidor-142M?rated=true" > diag/parties.ndjson
+python -m juge_recherche.diagnostic_phases --n-defaites 800 --n-victoires 800
+```
+
+`diag_positions`, `diag_stockfish` and `diag_propres` rebuild the measurement sets from scratch. The policy rankings behind the published numbers are provided too (`diag/modele.jsonl`, `diag/propres_modele.jsonl`): regenerating them on another GPU reorders a few near-tied moves in bf16 (here 18.28 % instead of 18.32 %, see *Determinism across two GPUs*).
+
+**2. Judge v1: a small head on the frozen trunk**
+
+```bash
+python -m juge_recherche.q_candidats --out data/q/candidats.jsonl     # the policy's 3 candidates, 500k positions
+python -m juge_recherche.etiqueter_q                                  # Stockfish scores them (200k nodes)
+python -m juge_recherche.juge_features --source qlabels --out data/juge/train \
+  --exclure diag/positions.jsonl diag/propres_positions.jsonl
+python -m juge_recherche.juge_features --source eval --out data/juge/eval_diag
+python -m juge_recherche.juge_features --source eval --positions diag/propres_positions.jsonl \
+  --modele diag/propres_modele.jsonl --out data/juge/eval_propres
+python -m juge_recherche.juge_train && python -m juge_recherche.juge_verrou
+```
+
+**3. Judge v2: a full copy, fine-tuned on Lichess `[%eval]`**
+
+```bash
+python -m juge_recherche.extraire_eval --mois 2026-05      # per month, from data/lichess_db_standard_rated_2026-05.pgn.zst
+python -m juge_recherche.valeur_encoder --src data/eval_pgn/eval_2026-05.jsonl --out data/valeur
+python -m juge_recherche.valeur_train --data data/valeur --epoques 1     # → checkpoints/valeur.pt
+python -m juge_recherche.valeur_pertes                     # loss profile vs the other selectors (uses step 2's features)
+```
+
+One pass over a game gives the judge a target for every move (the model is causal), about 70 targets per sequence. The encoder excludes any game that goes through a measurement position or one of its candidate moves, so run step 1 first.
+
+**4. Search**
+
+```bash
+python -m juge_recherche.recherche_verrou --jeu propres --configs "64:0.1:0.0:5,64:0.5:0.0:5,64:1.0:0.0:5"
+python -m juge_recherche.recherche_verrou --jeu diag --controle --configs "16:0.1:0.0:5,64:0.1:0.0:5,256:0.1:0.0:5"
+```
+
+A config is `simulations:cpuct:fpu:k`. `--controle` checks that a 6-simulation search reproduces the judge's own choice exactly (sign and path bugs).
+
+**5. Duels**
+
+```bash
+python -m juge_recherche.duel_lot --a valeur:5:0.25 --b base --games 2000 --out results/valeur_vs_policy.json
+python -m juge_recherche.duel_lot --a recherche:64:0.1:0.0:5 --b valeur:5:0.25 --games 1000 --out results/search_vs_judge.json
+python -m juge_recherche.duel_lot --a recherche:256:0.1:0.0:5 --b recherche:64:0.1:0.0:5 --games 400 --out results/256_vs_64.json
+python -m juge_recherche.duel_lot --a juge:5:0.5 --b base --games 2000 --out results/judge_v1.json
+python -m juge_recherche.duel_lot --a sfsel:5:4 --b base --games 2000 --out results/ceiling_depth4.json
+python -m juge_recherche.duel_lot --a recherche:64:0.1:0.0:5 --b recherche:64:0.1:0.0:5 --games 100 --out results/clone.json
+```
+
+All games advance together and each player computes its move for every game where it is to move, in GPU batches: 400 games in under two minutes for the policy + judge engine. Because batch composition changes the bf16 rounding, a batched clone control is centred on 0.500 without being exactly 0.500 (it is exact one game at a time).
+
+**6. The bot**
+
+```bash
+VALEUR=checkpoints/valeur.pt RECHERCHE=1024 ./run_lichess_bot.sh
+```
+
+Without the judge file, the bot stays the policy alone. With it, the server picks the number of simulations at every move (`juge_recherche/budget_pendule.py`): about 80 % of the clock, the effort in the middlegame (where the judge corrects the intuition twice as often as in the opening), down to a single pass when time runs out. A long search gives way if another game has been waiting longer than its patience. CUDA graphs halve the cost: 1024 simulations in about 3 s on an RTX 3060. The cap can be changed without restarting, in `logs/sims_max.txt`.
+
+**7. Distillation (negative result)**
+
+```bash
+python -m juge_recherche.iteration_etiqueter    # targets: the policy + judge choice, 6.26 M positions
+python -m juge_recherche.iteration_recherche    # targets: the search's visit counts, 100k positions
+python -m juge_recherche.iteration_train --data data/iteration/b1              # for b3: --alpha 0 --T 1 (targets ∝ visits)
+```
+
+Teaching the single-pass policy what the judge or the search would choose barely moves the blunder rate and gives no measurable Elo: in one pass, the policy cannot reproduce what is computed on the positions that come after.
+
+---
+
 ## The files
 
 ### The pipeline
@@ -283,6 +414,18 @@ disagreement case: same position, `Rxf7` on one card, `Ne4+` on the other.
 | `engine_client.py` | Lightweight client, one per game |
 | `run_lichess_bot.sh` | Runs the bot with a watchdog that only restarts on a real crash |
 
+### Judge and search (`juge_recherche/`)
+
+| File | Role |
+|---|---|
+| `diagnostic_phases.py`, `diag_*.py` | Where the bot loses, blunder rate, depth of blunders, linear probes, ceiling |
+| `q_candidats.py`, `etiqueter_q.py`, `juge_features.py`, `juge_train.py`, `juge_verrou.py`, `engine_juge.py` | Judge v1: a small head on the frozen trunk |
+| `extraire_eval.py`, `valeur_encoder.py`, `valeur_train.py`, `valeur_pertes.py`, `engine_valeur.py` | Judge v2: a full copy fine-tuned on Lichess `[%eval]` |
+| `recherche.py`, `recherche_verrou.py`, `engine_recherche.py` | PUCT search, its offline gate, its engine |
+| `graphes.py`, `budget_pendule.py` | CUDA graphs; the per-move budget from the clock |
+| `duel_lot.py`, `engine_sfselect.py` | Batched duels with paired openings; Stockfish choosing in the top-k (ceiling) |
+| `iteration_*.py` | Distillation of the judge or the search into the policy (negative result) |
+
 ### Plots
 
 `plots.py` for training curves, `plots_article.py` for one-off visuals, `game_gif.py` to animate a game,
@@ -301,6 +444,12 @@ disagreement case: same position, `Rxf7` on one card, `Ne4+` on the other.
 | Different temperatures between two measurements | artificial gap attributed to the model | one temperature per metric |
 | Rapid bot restarts | `429` lasting over an hour | slow watchdog, on real crashes only |
 | Same weights, two GPUs | 50 Elo gap between two runs of the same duel | run both arms on one card |
+| Left padding without an attention mask | 70/200 agreement, blunder rate 52 % instead of 18 %, conclusion inverted | one position at a time, or batches of equal length; right padding is harmless in a causal model |
+| Deduplicating against a file that contains the validation set | 84.65 % "already seen" instead of 0.17 % | skip the validation games |
+| Probe trained 200 epochs | positive control at 0.871 instead of 1.000 | train until the control is perfect, then read the probe |
+| A single non-finite training step | every weight becomes NaN (`clip_grad_norm_` does not protect) | skip non-finite steps, never save a NaN state |
+| Two processes on one GPU, small batches | 3 s per move instead of 0.66 s, the bot slowed down too | one latency-sensitive process per card; batch the duels |
+| Blunder rate as a proxy for Elo | judge v1 and judge v2 tied offline, +52 vs +130 in games | always confirm with a duel |
 
 Each one is told in detail in [the article](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend).
 
@@ -339,6 +488,8 @@ Il ne voit pas d'échiquier. Il reçoit une suite de coups en notation UCI, `e2e
 
 **[Lire l'article complet](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend)**, le récit du projet, les choix, les mesures et les erreurs, dont une qui a failli coûter quinze heures de calcul.
 
+**[Deuxième partie : de 1700 à 2000](https://www.billygirboux.fr/fr/blog/philidor-1700-a-2000)** : une intuition, un juge et une recherche emmènent le bot au-delà de 2000 sur Lichess. [Tout est ci-dessous](#de-1700-à-2000--une-intuition-un-juge-et-une-recherche), dans [`juge_recherche/`](juge_recherche/).
+
 ---
 
 ## Une partie, jusqu'au mat
@@ -355,7 +506,7 @@ Partie complète et rejouable : [lichess.org/delDiQ5h](https://lichess.org/delDi
 
 ## Ce que ce dépôt contient
 
-Tout ce qui est nécessaire pour refaire l'expérience de bout en bout : construire le vocabulaire, filtrer un dump Lichess, entraîner le modèle, l'évaluer, le faire jouer contre Stockfish, et le mettre en ligne comme bot.
+Tout ce qui est nécessaire pour refaire l'expérience de bout en bout : construire le vocabulaire, filtrer un dump Lichess, entraîner le modèle, l'évaluer, le faire jouer contre Stockfish, et le mettre en ligne comme bot. Puis la seconde étape : un juge et une recherche qui l'emmènent de 1700 à 2000 ([ci-dessous](#de-1700-à-2000--une-intuition-un-juge-et-une-recherche)).
 
 Aucune dépendance exotique. PyTorch pur, sans framework d'entraînement : chaque ligne de la boucle est lisible.
 
@@ -574,6 +725,135 @@ de désaccord réel : même position, `Rxf7` sur une carte, `Ne4+` sur l'autre.
 
 ---
 
+## De 1700 à 2000 : une intuition, un juge, et une recherche
+
+**[Lire le second article](https://www.billygirboux.fr/fr/blog/philidor-1700-a-2000)**. Tout ce qu'il décrit se trouve dans [`juge_recherche/`](juge_recherche/), avec les sorties brutes dans [`results/juge_recherche/`](results/juge_recherche/).
+
+Le modèle de 142 M plafonnait à 1700. Des semaines de tentatives pour qu'il imite mieux (plus gros, plus de données, les coups de Stockfish comme cibles, des jetons de réflexion, des boucles latentes) n'ont rien donné. Un diagnostic a montré pourquoi : **il joue le coup le plus probable, pas le meilleur**. Sur 5 000 positions de milieu de partie jamais vues, il gaffe 18,3 % du temps (les humains : 20,7 % sur les mêmes positions), alors que lors de ses gaffes le meilleur coup figurait 71,5 % du temps parmi ses cinq premières idées, qu'il « voit » les pièces en prise (sonde linéaire, AUC 0,992), et que 73 % de ses gaffes se voient à 4 demi-coups ou moins. Le problème est le choix, pas la connaissance.
+
+Le bot est donc devenu **deux transformeurs de même architecture et une recherche** :
+
+| Pièce | Rôle | Ce que c'est |
+|---|---|---|
+| **Politique** | propose les coups (l'intuition) | le modèle de 142 M, **inchangé** |
+| **Juge** | dit qui gagne après un coup | une copie du même transformeur de 142 M, affinée sur les évaluations Stockfish que Lichess conserve dans les parties annotées (`[%eval]`) |
+| **Recherche** | les fait réfléchir à l'avance | PUCT, comme AlphaZero : la politique choisit où regarder, le juge note les positions atteintes |
+
+Ni livre d'ouvertures, ni évaluation écrite à la main. **Stockfish ne joue jamais dans le bot** : il est distillé dans le juge par les annotations `[%eval]`, et ne sert qu'à mesurer.
+
+### Ce que vaut chaque étape
+
+Chaque duel utilise des ouvertures appariées (chaque ouverture aléatoire est jouée deux fois, couleurs inversées) et un témoin clone, avec des intervalles à 95 %.
+
+| Étape | Taux de gaffes hors ligne (≥ 100 cp, 5 000 positions) | Duel |
+|---|---|---|
+| Politique seule (argmax) | 18,32 % | référence |
+| Plafond : Stockfish profondeur 1 / 4 / 12 choisit dans le top-5 | 14,94 / 11,88 / 5,14 % | +126,8 / +329,1 / +599,4 contre la politique |
+| Juge v1 : petite tête sur le tronc gelé (1,5 M candidats) | 15,72 % | **+51,8** [+38,3 ; +65,5] contre la politique |
+| Juge v2 : copie complète, 1 mois d'évaluations (67,8 M) | 15,28 % | **+129,9** [+115,8 ; +144,5] contre la politique ; +54,3 contre le juge v1 |
+| Juge v2 réentraîné sur 4 mois (412 M évaluations) | 14,30 % | +33,1 [+19,7 ; +46,6] contre 1 mois |
+| Recherche, 16 / 64 / 256 simulations (juge 1 mois) | 13,74 / 11,64 / 8,10 % | 64 sim. : **+381,7** [+351,8 ; +416,3] contre politique + juge |
+| Recherche, 256 contre 64 simulations (juge 4 mois, comme la suite) | 10,98 % à 64 | **+415,6** [+368,2 ; +477,1] |
+| Recherche, 1024 contre 256 simulations | 6,90 contre 9,50 % (1 000 positions) | **+326,4** [+278,6 ; +386,5] |
+| Recherche, 4096 contre 1024 simulations | 4,75 contre 4,75 % (400 positions) | rien de mesurable : c'est désormais le juge qui limite |
+| Distillation : apprendre à la politique le choix de la recherche, en une passe | −0,1 à −1,2 point | rien de mesurable (résultat négatif) |
+
+Sur Lichess (`philidor-142M`) :
+
+| Date | Moteur | Bullet | Blitz | Rapide | Classique |
+|---|---|---|---|---|---|
+| 9 août | politique seule | 1646 | 1671 | 1702 | |
+| 30 sept. | recherche + graphes CUDA | 2020 | 1975 | 1996 | 1930 |
+| 5 oct. | idem | 2082 | 2103 | 2137 | 2041 |
+
+### Reproduire
+
+Tout se lance depuis la racine du dépôt. Il faut le point de sauvegarde du 142 M produit par le pipeline ci-dessus (`checkpoints/run2_best.pt`), les archives mensuelles de Lichess dans `data/` pour le juge, et un binaire Stockfish pour les mesures seulement (`export STOCKFISH=/chemin/vers/stockfish`).
+
+Les deux jeux de mesure sont fournis, avec l'évaluation à profondeur 18 de chaque coup légal (des heures de calcul) : `diag/positions.jsonl` + `diag/stockfish18.jsonl` (5 000 milieux de partie humains, jamais vus à l'entraînement) et `diag/propres_positions.jsonl` + `diag/propres_sf18.jsonl` (4 670 positions des parties du bot). Les réglages se font toujours sur les positions du bot et se publient sur l'autre jeu.
+
+**1. Diagnostic et plafond**
+
+```bash
+python -m juge_recherche.diag_modele                     # classement de la politique sur les 5 000 positions
+python -m juge_recherche.diag_modele --positions diag/propres_positions.jsonl --out diag/propres_modele.jsonl
+python -m juge_recherche.diag_analyse                    # taux de gaffes, meilleur coup dans le top-5
+python -m juge_recherche.diag_profondeur                 # à quelle profondeur chaque gaffe devient visible
+python -m juge_recherche.diag_sondes_positions && python -m juge_recherche.diag_sondes   # sondes linéaires
+python -m juge_recherche.diag_plafond                    # plafond : Stockfish choisit dans le top-5
+# où le bot perd : ses parties classées, exportées par l'API Lichess
+curl -H "Accept: application/x-ndjson" "https://lichess.org/api/games/user/philidor-142M?rated=true" > diag/parties.ndjson
+python -m juge_recherche.diagnostic_phases --n-defaites 800 --n-victoires 800
+```
+
+`diag_positions`, `diag_stockfish` et `diag_propres` reconstruisent les jeux de mesure depuis zéro. Les classements de la politique qui ont produit les chiffres publiés sont fournis aussi (`diag/modele.jsonl`, `diag/propres_modele.jsonl`) : les régénérer sur une autre carte réordonne quelques coups quasi à égalité en bf16 (ici 18,28 % au lieu de 18,32 %, voir *Déterminisme entre deux GPU*).
+
+**2. Juge v1 : une petite tête sur le tronc gelé**
+
+```bash
+python -m juge_recherche.q_candidats --out data/q/candidats.jsonl     # les 3 candidats de la politique, 500 000 positions
+python -m juge_recherche.etiqueter_q                                  # Stockfish les note (200 000 nœuds)
+python -m juge_recherche.juge_features --source qlabels --out data/juge/train \
+  --exclure diag/positions.jsonl diag/propres_positions.jsonl
+python -m juge_recherche.juge_features --source eval --out data/juge/eval_diag
+python -m juge_recherche.juge_features --source eval --positions diag/propres_positions.jsonl \
+  --modele diag/propres_modele.jsonl --out data/juge/eval_propres
+python -m juge_recherche.juge_train && python -m juge_recherche.juge_verrou
+```
+
+**3. Juge v2 : une copie complète, affinée sur les `[%eval]` de Lichess**
+
+```bash
+python -m juge_recherche.extraire_eval --mois 2026-05      # par mois, depuis data/lichess_db_standard_rated_2026-05.pgn.zst
+python -m juge_recherche.valeur_encoder --src data/eval_pgn/eval_2026-05.jsonl --out data/valeur
+python -m juge_recherche.valeur_train --data data/valeur --epoques 1     # → checkpoints/valeur.pt
+python -m juge_recherche.valeur_pertes                     # profil de pertes face aux autres sélecteurs (utilise l'étape 2)
+```
+
+Une passe sur une partie donne au juge une cible par coup (le modèle est causal), environ 70 cibles par séquence. L'encodeur exclut toute partie qui passe par une position de mesure ou par l'un de ses coups candidats : faire l'étape 1 d'abord.
+
+**4. Recherche**
+
+```bash
+python -m juge_recherche.recherche_verrou --jeu propres --configs "64:0.1:0.0:5,64:0.5:0.0:5,64:1.0:0.0:5"
+python -m juge_recherche.recherche_verrou --jeu diag --controle --configs "16:0.1:0.0:5,64:0.1:0.0:5,256:0.1:0.0:5"
+```
+
+Une config s'écrit `simulations:cpuct:fpu:k`. `--controle` vérifie qu'une recherche à 6 simulations redonne exactement le choix du juge seul (bugs de signe ou de chemin).
+
+**5. Duels**
+
+```bash
+python -m juge_recherche.duel_lot --a valeur:5:0.25 --b base --games 2000 --out results/valeur_contre_politique.json
+python -m juge_recherche.duel_lot --a recherche:64:0.1:0.0:5 --b valeur:5:0.25 --games 1000 --out results/recherche_contre_juge.json
+python -m juge_recherche.duel_lot --a recherche:256:0.1:0.0:5 --b recherche:64:0.1:0.0:5 --games 400 --out results/256_contre_64.json
+python -m juge_recherche.duel_lot --a juge:5:0.5 --b base --games 2000 --out results/juge_v1.json
+python -m juge_recherche.duel_lot --a sfsel:5:4 --b base --games 2000 --out results/plafond_p4.json
+python -m juge_recherche.duel_lot --a recherche:64:0.1:0.0:5 --b recherche:64:0.1:0.0:5 --games 100 --out results/clone.json
+```
+
+Toutes les parties avancent ensemble, et chaque joueur calcule son coup pour toutes les parties où il a le trait, en lots sur le GPU : 400 parties en moins de deux minutes pour le moteur politique + juge. La composition des lots changeant l'arrondi bf16, un témoin clone en lot est centré sur 0,500 sans valoir exactement 0,500 (il l'est une partie à la fois).
+
+**6. Le bot**
+
+```bash
+VALEUR=checkpoints/valeur.pt RECHERCHE=1024 ./run_lichess_bot.sh
+```
+
+Sans le fichier du juge, le bot reste la politique seule. Avec lui, le serveur choisit le nombre de simulations à chaque coup (`juge_recherche/budget_pendule.py`) : environ 80 % de la pendule, l'effort au milieu de partie (là où le juge corrige l'intuition deux fois plus souvent que dans l'ouverture), jusqu'à une seule passe quand le temps manque. Une recherche longue cède la place si une autre partie attend plus que sa patience. Les graphes CUDA divisent le coût par deux : 1024 simulations en environ 3 s sur une RTX 3060. Le plafond se change sans redémarrer, dans `logs/sims_max.txt`.
+
+**7. Distillation (résultat négatif)**
+
+```bash
+python -m juge_recherche.iteration_etiqueter    # cibles : le choix politique + juge, 6,26 M positions
+python -m juge_recherche.iteration_recherche    # cibles : les visites de la recherche, 100 000 positions
+python -m juge_recherche.iteration_train --data data/iteration/b1              # pour b3 : --alpha 0 --T 1 (cibles ∝ visites)
+```
+
+Apprendre à la politique, en une passe, ce que le juge ou la recherche choisiraient fait à peine bouger le taux de gaffes et ne donne aucun Elo mesurable : en une passe, la politique ne reproduit pas ce qui se calcule sur les positions d'après.
+
+---
+
 ## Les fichiers
 
 ### Le pipeline
@@ -606,6 +886,18 @@ de désaccord réel : même position, `Rxf7` sur une carte, `Ne4+` sur l'autre.
 | `engine_client.py` | Client léger, un par partie |
 | `run_lichess_bot.sh` | Lance le bot avec un watchdog qui ne relance que sur un vrai crash |
 
+### Juge et recherche (`juge_recherche/`)
+
+| Fichier | Rôle |
+|---|---|
+| `diagnostic_phases.py`, `diag_*.py` | Où le bot perd, taux de gaffes, profondeur des gaffes, sondes linéaires, plafond |
+| `q_candidats.py`, `etiqueter_q.py`, `juge_features.py`, `juge_train.py`, `juge_verrou.py`, `engine_juge.py` | Juge v1 : une petite tête sur le tronc gelé |
+| `extraire_eval.py`, `valeur_encoder.py`, `valeur_train.py`, `valeur_pertes.py`, `engine_valeur.py` | Juge v2 : une copie complète affinée sur les `[%eval]` de Lichess |
+| `recherche.py`, `recherche_verrou.py`, `engine_recherche.py` | Recherche PUCT, son verrou hors ligne, son moteur |
+| `graphes.py`, `budget_pendule.py` | Graphes CUDA ; le budget par coup selon la pendule |
+| `duel_lot.py`, `engine_sfselect.py` | Duels en lot à ouvertures appariées ; Stockfish choisit dans le top-k (plafond) |
+| `iteration_*.py` | Distillation du juge ou de la recherche dans la politique (résultat négatif) |
+
 ### Graphiques
 
 `plots.py` pour les courbes de progression, `plots_article.py` pour les visuels ponctuels, `game_gif.py` pour animer une partie,
@@ -624,6 +916,12 @@ de désaccord réel : même position, `Rxf7` sur une carte, `Ne4+` sur l'autre.
 | Températures différentes entre deux mesures | écart artificiel attribué au modèle | une température par métrique |
 | Redémarrages rapprochés du bot | `429` qui dure plus d'une heure | watchdog lent, sur crash réel seulement |
 | Mêmes poids, deux GPU | 50 Elo d'écart entre deux passages du même duel | les deux bras sur une seule carte |
+| Bourrage à gauche sans masque d'attention | 70/200 d'accord, taux de gaffes à 52 % au lieu de 18 %, conclusion inversée | une position à la fois, ou des lots de même longueur ; le bourrage à droite est sans effet dans un modèle causal |
+| Dédoublonner contre un fichier qui contient la validation | 84,65 % « déjà vues » au lieu de 0,17 % | sauter les parties de validation |
+| Sonde entraînée 200 époques | contrôle positif à 0,871 au lieu de 1,000 | entraîner jusqu'à un contrôle parfait, puis lire la sonde |
+| Un seul pas d'entraînement non fini | tous les poids passent à NaN (`clip_grad_norm_` ne protège pas) | sauter les pas non finis, ne jamais sauvegarder un état NaN |
+| Deux processus sur un GPU, petits lots | 3 s par coup au lieu de 0,66 s, le bot ralenti aussi | un seul processus sensible à la latence par carte ; jouer les duels en lot |
+| Le taux de gaffes comme mesure de l'Elo | juges v1 et v2 à égalité hors ligne, +52 contre +130 en partie | toujours confirmer par un duel |
 
 Chacun est raconté en détail dans [l'article](https://www.billygirboux.fr/fr/blog/modele-ia-echecs-weekend).
 

@@ -116,24 +116,49 @@ def elo_with_error(wins: int, draws: int, losses: int, z: float = 1.96):
 # Une partie
 # ---------------------------------------------------------------------------
 
-def play_game(model_engine, sf, model_is_white: bool, sf_limit,
-              random_plies: int, rng, max_plies: int = 400):
-    """Joue une partie. Renvoie (résultat du point de vue du modèle, raison).
+def tirer_ouverture(rng, random_plies: int) -> list[str]:
+    """Tire une ouverture au hasard : `random_plies` demi-coups légaux.
 
-    Résultat : 1.0 victoire, 0.5 nulle, 0.0 défaite.
+    Isolée dans sa propre fonction pour une raison qui n'est pas cosmétique :
+    une ouverture doit pouvoir être JOUÉE DEUX FOIS, une fois dans chaque sens
+    de couleur. Tant que le tirage était enfoui dans la boucle de partie,
+    chaque partie recevait une ouverture neuve et les deux sens de couleur ne
+    partageaient jamais la même position de départ.
+
+    On comparait donc deux échantillons différents, et l'avantage du trait se
+    mélangeait au hasard du tirage au lieu de s'annuler. Le biais était le même
+    pour tous les camps comparés, donc il ne renversait pas les conclusions,
+    mais il gonflait la variance : une même cellule de 300 parties pouvait
+    bouger de six points de score d'un run à l'autre. Défaut signalé
+    publiquement par Théo Charlet, vérifié, corrigé ici.
     """
     board = chess.Board()
-    history: list[str] = []
-
-    # Quelques coups au hasard pour diversifier les parties, joués par les
-    # deux camps. Sans ça, deux moteurs déterministes rejouent exactement la
-    # même partie à chaque fois et l'échantillon n'a aucune valeur.
+    coups: list[str] = []
     for _ in range(random_plies):
         if board.is_game_over():
             break
         move = rng.choice(list(board.legal_moves))
         board.push(move)
-        history.append(move.uci())
+        coups.append(move.uci())
+    return coups
+
+
+def play_game(model_engine, sf, model_is_white: bool, sf_limit,
+              ouverture: list[str], max_plies: int = 400):
+    """Joue une partie. Renvoie (résultat du point de vue du modèle, raison).
+
+    Résultat : 1.0 victoire, 0.5 nulle, 0.0 défaite.
+
+    `ouverture` est la liste des demi-coups de départ, tirée par
+    `tirer_ouverture` et réutilisée pour la partie jumelle où les couleurs sont
+    inversées.
+    """
+    board = chess.Board()
+    history: list[str] = []
+
+    for uci in ouverture:
+        board.push(chess.Move.from_uci(uci))
+        history.append(uci)
 
     while not board.is_game_over(claim_draw=True) and len(history) < max_plies:
         model_turn = (board.turn == chess.WHITE) == model_is_white
@@ -162,7 +187,7 @@ def play_game(model_engine, sf, model_is_white: bool, sf_limit,
     return (1.0 if model_won else 0.0), outcome.termination.name.lower()
 
 
-def play_game_model_vs_model(eng_a, eng_b, a_is_white, random_plies, rng,
+def play_game_model_vs_model(eng_a, eng_b, a_is_white, ouverture,
                              max_plies=400):
     """Deux checkpoints du même modèle s'affrontent.
 
@@ -175,12 +200,9 @@ def play_game_model_vs_model(eng_a, eng_b, a_is_white, random_plies, rng,
     board = chess.Board()
     history: list[str] = []
 
-    for _ in range(random_plies):
-        if board.is_game_over():
-            break
-        move = rng.choice(list(board.legal_moves))
-        board.push(move)
-        history.append(move.uci())
+    for uci in ouverture:
+        board.push(chess.Move.from_uci(uci))
+        history.append(uci)
 
     while not board.is_game_over(claim_draw=True) and len(history) < max_plies:
         a_turn = (board.turn == chess.WHITE) == a_is_white
@@ -224,8 +246,9 @@ def run_head_to_head(ckpt_a, ckpt_b, vocab, device, n_games, random_plies,
     t0 = time.perf_counter()
 
     for i in range(n_games):
-        r, reason = play_game_model_vs_model(eng_a, eng_b, i % 2 == 0,
-                                             random_plies, rng)
+        if i % 2 == 0:                      # ouvertures appariées, cf. tirer_ouverture
+            ouverture = tirer_ouverture(rng, random_plies)
+        r, reason = play_game_model_vs_model(eng_a, eng_b, i % 2 == 0, ouverture)
         reasons[reason] += 1
         if r == 1.0:
             wins += 1
@@ -270,8 +293,9 @@ def run_ladder(snapshots, reference_ckpt, vocab, device, n_games,
         t0 = time.perf_counter()
 
         for i in range(n_games):
-            r, reason = play_game_model_vs_model(
-                eng, ref, i % 2 == 0, random_plies, rng)
+            if i % 2 == 0:                  # ouvertures appariées, cf. tirer_ouverture
+                ouverture = tirer_ouverture(rng, random_plies)
+            r, reason = play_game_model_vs_model(eng, ref, i % 2 == 0, ouverture)
             reasons[reason] += 1
             if r == 1.0:
                 wins += 1
@@ -303,11 +327,18 @@ def run_ladder(snapshots, reference_ckpt, vocab, device, n_games,
 # ---------------------------------------------------------------------------
 
 def run_match(model_engine, stockfish_path, skill_level, n_games, movetime_ms,
-              random_plies, seed, verbose=True):
+              random_plies, seed, verbose=True, nodes=None):
+    """`nodes` prime sur `movetime_ms` quand il est fourni, et c'est important.
+
+    Une limite en TEMPS rend le resultat dependant de la charge de la machine :
+    un banc lance pendant un entrainement donne un Stockfish affaibli, donc un
+    score flatteur. Une limite en NOEUDS est independante de la charge.
+    """
     rng = random.Random(seed)
     sf = chess.engine.SimpleEngine.popen_uci(stockfish_path)
     sf.configure({"Skill Level": skill_level, "Threads": 1, "Hash": 16})
-    limit = chess.engine.Limit(time=movetime_ms / 1000.0)
+    limit = (chess.engine.Limit(nodes=nodes) if nodes
+             else chess.engine.Limit(time=movetime_ms / 1000.0))
 
     wins = draws = losses = 0
     reasons = Counter()
@@ -315,11 +346,16 @@ def run_match(model_engine, stockfish_path, skill_level, n_games, movetime_ms,
 
     try:
         for i in range(n_games):
-            # On alterne les couleurs : jouer toujours blanc gonflerait le
-            # score d'un avantage qui n'a rien à voir avec la force du modèle.
+            # OUVERTURES APPARIÉES. Une ouverture est tirée pour la partie
+            # paire, puis rejouée telle quelle par la partie impaire avec les
+            # couleurs inversées. Alterner les couleurs ne suffit pas : si
+            # chaque partie reçoit sa propre ouverture, l'avantage du trait ne
+            # s'annule plus, il se mélange au hasard du tirage.
+            if i % 2 == 0:
+                ouverture = tirer_ouverture(rng, random_plies)
             model_is_white = (i % 2 == 0)
             result, reason = play_game(model_engine, sf, model_is_white, limit,
-                                       random_plies, rng)
+                                       ouverture)
             reasons[reason] += 1
             if result == 1.0:
                 wins += 1
@@ -371,15 +407,36 @@ def main():
     p.add_argument("--vs-games", type=int, default=300)
     p.add_argument("--label-a", default="A")
     p.add_argument("--label-b", default="B")
+    p.add_argument("--controle-clone", action="store_true",
+                   help="fait jouer le modèle contre une copie de lui-même. "
+                        "Avec des ouvertures appariées et une température de 0, "
+                        "le score doit valoir EXACTEMENT 50,00 %% : les deux "
+                        "moteurs étant la même fonction déterministe, la partie "
+                        "jumelle rejoue les mêmes coups avec les couleurs "
+                        "inversées, donc chaque paire se partage un point. Tout "
+                        "écart signale un protocole cassé, pas un modèle. "
+                        "Contrôle suggéré par Théo Charlet.")
+    p.add_argument("--controle-games", type=int, default=100)
     args = p.parse_args()
+
+    # Les ouvertures étant appariées deux par deux, un nombre impair de parties
+    # laisserait la dernière sans jumelle, donc une couleur en trop dans
+    # l'échantillon. On arrondit et on le dit, plutôt que de tronquer en silence.
+    for nom in ("games", "vs_games", "ladder_games", "controle_games"):
+        v = getattr(args, nom)
+        if v % 2:
+            setattr(args, nom, v - 1)
+            print(f"[protocole] --{nom.replace('_', '-')} ramené de {v} à "
+                  f"{v - 1} : les ouvertures sont appariées deux par deux.")
 
     eng = ChessEngine(args.ckpt, args.vocab, args.device, args.temperature)
     print(f"[modèle] {args.ckpt} | step {eng.ckpt_step:,} | "
           f"{eng.tokens_seen:,} tokens vus")
     print(f"[adversaire] {args.stockfish}, {args.movetime_ms} ms par coup, "
           f"niveaux {args.levels}")
-    print(f"[protocole] {args.games} parties par niveau, couleurs alternées, "
-          f"{args.random_plies} demi-coups d'ouverture aléatoires\n")
+    print(f"[protocole] {args.games} parties par niveau, "
+          f"{args.random_plies} demi-coups d'ouverture aléatoires, "
+          f"ouvertures appariées entre les deux sens de couleur\n")
 
     report = {
         "date_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -391,13 +448,39 @@ def main():
             "movetime_ms": args.movetime_ms,
             "demi_coups_aleatoires": args.random_plies,
             "couleurs": "alternées, le modèle joue blanc une partie sur deux",
+            "ouvertures_appariees": True,
+            "graine": args.seed,
             "temperature_modele": args.temperature,
-            "juge": ("python-chess, pas cutechess-cli, ce dernier n'est "
+            "juge": ("python-chess, pas cutechess-cli : ce dernier n'est "
                      "empaqueté ni dans Homebrew ni dans apt sur cette machine "
                      "et sa compilation exige Qt6 et les droits administrateur"),
+            "note_appariement": (
+                "Chaque ouverture est tirée une fois puis jouée deux fois, les "
+                "couleurs inversées. Les runs antérieurs au 17/08/2026 tiraient "
+                "une ouverture neuve par partie : les couleurs alternaient mais "
+                "les deux sens ne partageaient pas la position de départ, ce qui "
+                "gonflait la variance sans biaiser les comparaisons."),
         },
         "matchs": [],
     }
+
+    if args.controle_clone:
+        # Le contrôle passe AVANT les mesures : s'il échoue, les mesures qui
+        # suivent ne veulent rien dire, autant le savoir en trente secondes.
+        print("  == Contrôle du protocole : le modèle contre son clone ==",
+              flush=True)
+        c = run_head_to_head(args.ckpt, args.ckpt, args.vocab, args.device,
+                             args.controle_games, args.random_plies, args.seed,
+                             args.temperature, "clone A", "clone B")
+        report["controle_clone"] = c
+        ecart = abs(c["score"] - 0.5) * 100
+        if args.temperature > 0:
+            verdict = "informatif seulement, la température rend le jeu aléatoire"
+        else:
+            verdict = "OK" if ecart < 1e-9 else f"ANOMALIE, écart de {ecart:.2f} pt"
+        c["verdict"] = verdict
+        print(f"    -> score {c['score']:.2%} (+{c['victoires']} ={c['nulles']} "
+              f"-{c['defaites']}) | attendu 50,00 % | {verdict}\n", flush=True)
 
     for level in ([] if args.skip_stockfish else args.levels):
         print(f"  == Stockfish Skill Level {level} ==", flush=True)
