@@ -37,6 +37,7 @@ from juge_recherche.recherche import Recherche, chercher, tronc
 from elo_match import tirer_ouverture, elo_with_error
 
 CACHE = {}
+MOTEURS = []          # moteurs coup par coup, fermés en fin de programme
 
 
 def politique(path, dev):
@@ -77,6 +78,7 @@ class Joueur:
         if self.type == "sfsel":
             from juge_recherche.engine_sfselect import SFSelectEngine
             self.moteur = SFSelectEngine(ckpt, vocab, dev, k=int(args[0]), depth=int(args[1]))
+            MOTEURS.append(self.moteur)
             return
         self.pol = politique(ckpt, dev)
         if self.type != "base":
@@ -226,4 +228,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        for m in MOTEURS:           # Stockfish : sinon le programme ne se termine pas
+            m.close()

@@ -45,8 +45,13 @@ class SFSelectEngine(ChessEngine):
                          game=object())
         return r.move
 
-    def __del__(self):
+    def close(self):
+        """Ferme Stockfish. À appeler explicitement : sans cela, le fil de
+        python-chess qui le pilote empêche le programme de se terminer."""
         try:
             self.sf.quit()
         except Exception:
             pass
+
+    def __del__(self):
+        self.close()
