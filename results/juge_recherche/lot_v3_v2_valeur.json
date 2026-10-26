@@ -1,0 +1,37 @@
+{
+  "a": {
+    "label": "juge v3",
+    "spec": "valeur:5:0.25",
+    "ckpt": "checkpoints/run2_best.pt",
+    "valeur": "checkpoints/valeur_v3.pt"
+  },
+  "b": {
+    "label": "juge v2",
+    "spec": "valeur:5:0.25",
+    "ckpt": "checkpoints/run2_best.pt",
+    "valeur": "checkpoints/valeur_v2.pt"
+  },
+  "protocole": {
+    "parties": 2000,
+    "ouvertures_appariees": true,
+    "demi_coups_aleatoires": 4,
+    "graine": 1234,
+    "en_lot": true
+  },
+  "victoires": 829,
+  "nulles": 461,
+  "defaites": 710,
+  "score": 0.52975,
+  "elo_diff": 20.7,
+  "elo_ic95_bas": 7.3,
+  "elo_ic95_haut": 34.1,
+  "terminaisons": {
+    "checkmate": 1539,
+    "threefold_repetition": 412,
+    "insufficient_material": 34,
+    "stalemate": 13,
+    "fifty_moves": 2
+  },
+  "demi_coups_moyens": 104.9405,
+  "duree_s": 779.2
+}

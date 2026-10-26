@@ -80,7 +80,9 @@ class Handler(socketserver.StreamRequestHandler):
                         req.get("wtime" if blanc else "btime"), req.get("winc" if blanc else "binc"),
                         len(board.move_stack)))
                 try:
+                    t_arrivee = time.time()
                     with self.server.lock:
+                        t_verrou = time.time()
                         with self.server.compteur:
                             self.server.attente.pop(cle, None)
                         eng = self.server.engine
@@ -95,6 +97,12 @@ class Handler(socketserver.StreamRequestHandler):
                     with self.server.compteur:
                         self.server.en_cours -= 1
                         self.server.attente.pop(cle, None)
+                t_fin = time.time()
+                # une ligne par coup : mesurer le vrai coût (calcul, attente derrière les autres parties)
+                print(f"[coup] ply {len(moves)} pendule {req.get('wtime' if board.turn == chess.WHITE else 'btime')} "
+                      f"inc {req.get('winc' if board.turn == chess.WHITE else 'binc')} sims {sims} "
+                      f"attente {1000*(t_verrou-t_arrivee):.0f} ms calcul {1000*(t_fin-t_verrou):.0f} ms",
+                      flush=True)
                 resp = {"move": mv.uci()}
                 if sims is not None:
                     resp["sims"] = sims
@@ -141,6 +149,7 @@ def main():
     p.add_argument("--recherche", type=int, default=0, help="simulations maximum par coup")
     p.add_argument("--cpuct", type=float, default=0.1)
     p.add_argument("--graphes", action="store_true", help="graphes CUDA pour la recherche (graphes.py)")
+    p.add_argument("--k-recherche", type=int, default=0, help="largeur de l'arbre (0 = --k)")
     args = p.parse_args()
 
     ready = args.socket + ".ready"
@@ -152,7 +161,8 @@ def main():
         from juge_recherche.engine_recherche import RechercheEngine
         eng = RechercheEngine(args.ckpt, args.vocab, args.device, args.temperature,
                               sims=args.recherche, cpuct=args.cpuct, fpu=0.0, k=args.k,
-                              alpha=args.alpha, valeur_path=args.valeur, graphes=args.graphes)
+                              alpha=args.alpha, valeur_path=args.valeur, graphes=args.graphes,
+                              k_recherche=args.k_recherche or None)
         if args.graphes:
             # capture de tous les graphes avant d'annoncer le serveur pret
             import time as _t
@@ -161,7 +171,7 @@ def main():
                 eng.evaluateur([[eng.bos] * L])
             print(f"[moteur] graphes CUDA : {len(eng.evaluateur.graphes)} captures en {_t.time()-t0:.1f} s", flush=True)
         print(f"[moteur] recherche : jusqu'a {args.recherche} simulations selon la pendule, "
-              f"cpuct {args.cpuct}, top-{args.k} ; sans recherche : alpha {args.alpha}, "
+              f"cpuct {args.cpuct}, top-{eng.k_recherche} ; sans recherche : top-{args.k}, alpha {args.alpha}, "
               f"{args.valeur}", flush=True)
     elif args.valeur:
         from juge_recherche.engine_valeur import ValeurEngine

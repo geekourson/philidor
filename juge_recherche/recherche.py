@@ -25,9 +25,16 @@ dans un modèle causal (contrôlé dans valeur_train.py), et lecture au dernier
 token réel de chaque séquence.
 """
 import math
+import random
 import chess
 import torch
 import torch.nn.functional as F
+
+
+# Collecte facultative des positions évaluées par la recherche (pour entraîner le
+# juge sur les positions qu'il note vraiment). None = désactivée (défaut, le bot).
+COLLECTE = None
+TAUX_COLLECTE = 0.25
 
 
 class Noeud:
@@ -102,6 +109,8 @@ class Recherche:
         pv = (pv / pv.sum()).tolist()
         nd.enfants = [Noeud(legaux[i], toks[i], pp) for i, pp in zip(ix.tolist(), pv)]
         nd.attente = False
+        if COLLECTE is not None and random.random() < TAUX_COLLECTE:
+            COLLECTE.append([m.uci() for m in b.move_stack])     # partie entière jusqu'à la feuille
         for x in reversed(chemin):                         # n déjà compté (perte virtuelle)
             x.w += v; v = 1.0 - v
 

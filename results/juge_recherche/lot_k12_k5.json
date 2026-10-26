@@ -1,0 +1,35 @@
+{
+  "a": {
+    "label": "k 12",
+    "spec": "recherche:1024:0.1:0.0:12",
+    "ckpt": "checkpoints/run2_best.pt",
+    "valeur": "checkpoints/valeur_v4.pt"
+  },
+  "b": {
+    "label": "k 5",
+    "spec": "recherche:1024:0.1:0.0:5",
+    "ckpt": "checkpoints/run2_best.pt",
+    "valeur": "checkpoints/valeur_v4.pt"
+  },
+  "protocole": {
+    "parties": 200,
+    "ouvertures_appariees": true,
+    "demi_coups_aleatoires": 4,
+    "graine": 1234,
+    "en_lot": true
+  },
+  "victoires": 100,
+  "nulles": 62,
+  "defaites": 38,
+  "score": 0.655,
+  "elo_diff": 111.4,
+  "elo_ic95_bas": 71.6,
+  "elo_ic95_haut": 154.2,
+  "terminaisons": {
+    "checkmate": 138,
+    "threefold_repetition": 53,
+    "insufficient_material": 9
+  },
+  "demi_coups_moyens": 115.45,
+  "duree_s": 62570.9
+}

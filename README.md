@@ -283,7 +283,11 @@ Every duel uses paired openings (each random opening is played twice, colours sw
 | Search, 16 / 64 / 256 simulations (1-month judge) | 13.74 / 11.64 / 8.10 % | 64 sims: **+381.7** [+351.8 ; +416.3] vs policy + judge |
 | Search, 256 vs 64 simulations (4-month judge, as below) | 10.98 % at 64 | **+415.6** [+368.2 ; +477.1] |
 | Search, 1024 vs 256 simulations | 6.90 vs 9.50 % (1,000 positions) | **+326.4** [+278.6 ; +386.5] |
-| Search, 4096 vs 1024 simulations | 4.75 vs 4.75 % (400 positions) | nothing measurable: the judge is now the limit |
+| Search, 4096 vs 1024 simulations | 4.75 vs 4.75 % (400 positions) | nothing measurable at 5 moves per node (see tree width below) |
+| Judge v3: v2 trained 2 more epochs on the same 4 months | 13.02 % | **+16.7** [+2.7 ; +30.8] with search (2,000 games); +20.7 [+7.3 ; +34.1] without |
+| Judge v4: v3 + 1 epoch on 6 months (639.6 M evaluations) | 13.02 % | **+16.3** [+2.7 ; +30.1] vs v3, with search |
+| Tree width: 12 moves per node instead of 5, at 1024 simulations | 5.20 vs 6.70 % (1,000 positions) | **+111.4** [+71.6 ; +154.2] |
+| Judge v5: v4 fine-tuned on the positions the search visits (590k leaves + the bot's games, Stockfish 100k nodes) | 13.24 % | +6.6 [−7.1 ; +20.3], not significant (negative result) |
 | Distillation: teaching the policy the search's choice, in one pass | −0.1 to −1.2 point | nothing measurable (negative result) |
 
 On Lichess (`philidor-142M`):
@@ -293,6 +297,8 @@ On Lichess (`philidor-142M`):
 | 9 Aug | policy alone | 1646 | 1671 | 1702 | |
 | 30 Sep | search + CUDA graphs | 2020 | 1975 | 1996 | 1930 |
 | 5 Oct | same | 2082 | 2103 | 2137 | 2041 |
+| 8 Oct | judge v4 | 2090 | 2131 | 2188 | 2100 |
+| 26 Oct | judge v4, tree width 12 | 2119 | 2100 | 2278 | 2169 |
 
 ### Reproducing it
 
@@ -336,6 +342,12 @@ python -m juge_recherche.extraire_eval --mois 2026-05      # per month, from dat
 python -m juge_recherche.valeur_encoder --src data/eval_pgn/eval_2026-05.jsonl --out data/valeur
 python -m juge_recherche.valeur_train --data data/valeur --epoques 1     # → checkpoints/valeur.pt
 python -m juge_recherche.valeur_pertes                     # loss profile vs the other selectors (uses step 2's features)
+# v2 on 4 months (2026-04 to 07), then v3 and v4, each starting from the previous one
+python -m juge_recherche.valeur_train --data data/valeur_4m --init checkpoints/valeur_v2.pt --epoques 2 \
+  --lr 5e-5 --lr-min-frac 0.1 --seed 99 --out checkpoints/valeur_v3.pt
+python -m juge_recherche.valeur_encoder --src data/eval_pgn/eval_2026-0{4,5,6,7,8,9}.jsonl --out data/valeur_6m
+python -m juge_recherche.valeur_train --data data/valeur_6m --init checkpoints/valeur_v3.pt --epoques 1 \
+  --lr 5e-5 --lr-min-frac 0.1 --seed 7 --out checkpoints/valeur_v4.pt
 ```
 
 One pass over a game gives the judge a target for every move (the model is causal), about 70 targets per sequence. The encoder excludes any game that goes through a measurement position or one of its candidate moves, so run step 1 first.
@@ -345,9 +357,12 @@ One pass over a game gives the judge a target for every move (the model is causa
 ```bash
 python -m juge_recherche.recherche_verrou --jeu propres --configs "64:0.1:0.0:5,64:0.5:0.0:5,64:1.0:0.0:5"
 python -m juge_recherche.recherche_verrou --jeu diag --controle --configs "16:0.1:0.0:5,64:0.1:0.0:5,256:0.1:0.0:5"
+# tree width at 1024 simulations, choices saved for a paired comparison
+python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
+  --configs "1024:0.1:0.0:5,1024:0.1:0.0:8,1024:0.1:0.0:12" --out results/largeur.json
 ```
 
-A config is `simulations:cpuct:fpu:k`. `--controle` checks that a 6-simulation search reproduces the judge's own choice exactly (sign and path bugs).
+A config is `simulations:cpuct:fpu:k`, where `k` is the number of moves kept at every node. With 5, the search never saw a refutation outside the opponent's top 5; 12 costs nothing more (same number of simulations) and is probably why 4096 simulations brought nothing at 5. `--controle` checks that a 6-simulation search reproduces the judge's own choice exactly (sign and path bugs).
 
 **5. Duels**
 
@@ -365,12 +380,25 @@ All games advance together and each player computes its move for every game wher
 **6. The bot**
 
 ```bash
-VALEUR=checkpoints/valeur.pt RECHERCHE=1024 ./run_lichess_bot.sh
+VALEUR=checkpoints/valeur_v4.pt RECHERCHE=1024 RECHERCHE_K=12 ./run_lichess_bot.sh
 ```
 
-Without the judge file, the bot stays the policy alone. With it, the server picks the number of simulations at every move (`juge_recherche/budget_pendule.py`): about 80 % of the clock, the effort in the middlegame (where the judge corrects the intuition twice as often as in the opening), down to a single pass when time runs out. A long search gives way if another game has been waiting longer than its patience. CUDA graphs halve the cost: 1024 simulations in about 3 s on an RTX 3060. The cap can be changed without restarting, in `logs/sims_max.txt`.
+Without the judge file, the bot stays the policy alone. With it, the server picks the number of simulations at every move (`juge_recherche/budget_pendule.py`): about 80 % of the clock, the effort in the middlegame (where the judge corrects the intuition twice as often as in the opening), down to a single pass when time runs out: always under 10 s left, and under 20 s at most 16 simulations, with the increment kept to rebuild the clock (spending it there lost 9 % of the bot's games on time). The server logs every move (`[coup]`: clock, simulations, wait, compute), which is how the real overhead was measured: 62 ms per move at the median. A long search gives way if another game has been waiting longer than its patience. CUDA graphs halve the cost: 1024 simulations in about 3 s on an RTX 3060. The cap can be changed without restarting, in `logs/sims_max.txt`.
 
-**7. Distillation (negative result)**
+**7. Judge v5: training on the search's own positions (negative result)**
+
+```bash
+python -m juge_recherche.generer_feuilles --games 1000 --sims 64 --taux 0.15 --valeur checkpoints/valeur_v4.pt --out data/v5/feuilles.jsonl
+python -m juge_recherche.etiqueter_positions --in data/v5/feuilles.jsonl --mode feuille --out data/v5/feuilles_notees.jsonl
+python -m juge_recherche.etiqueter_positions --pgn-dir logs/lichess_games --mode partie --out data/v5/parties_bot.jsonl
+head -n 50000 data/eval_pgn/eval_2026-09.jsonl > data/v5/humain_50k.jsonl      # so as not to forget
+python -m juge_recherche.valeur_encoder --src data/v5/humain_50k.jsonl data/v5/parties_bot.jsonl data/v5/feuilles_notees.jsonl --out data/v5/encode
+python -m juge_recherche.valeur_train --data data/v5/encode --init checkpoints/valeur_v4.pt --lr 3e-5 --lr-min-frac 0.1 --epoques 1 --seed 5 --out checkpoints/valeur_v5.pt
+```
+
+The judge learned on human games, while the search queries it on positions imagined several moves ahead. Scoring those positions with Stockfish and fine-tuning on them changed nothing measurable. Untested: Stockfish at 100k nodes scores less finely than the Lichess analyses, there are only 4.7 M targets (75 % human), and the leaves come from 64-simulation searches while the bot runs 1024.
+
+**8. Distillation (negative result)**
 
 ```bash
 python -m juge_recherche.iteration_etiqueter    # targets: the policy + judge choice, 6.26 M positions
@@ -424,6 +452,7 @@ Teaching the single-pass policy what the judge or the search would choose barely
 | `recherche.py`, `recherche_verrou.py`, `engine_recherche.py` | PUCT search, its offline gate, its engine |
 | `graphes.py`, `budget_pendule.py` | CUDA graphs; the per-move budget from the clock |
 | `duel_lot.py`, `engine_sfselect.py` | Batched duels with paired openings; Stockfish choosing in the top-k (ceiling) |
+| `generer_feuilles.py`, `etiqueter_positions.py` | Judge v5: the positions the search visits, scored by Stockfish (negative result) |
 | `iteration_*.py` | Distillation of the judge or the search into the policy (negative result) |
 
 ### Plots
@@ -755,7 +784,11 @@ Chaque duel utilise des ouvertures appariées (chaque ouverture aléatoire est j
 | Recherche, 16 / 64 / 256 simulations (juge 1 mois) | 13,74 / 11,64 / 8,10 % | 64 sim. : **+381,7** [+351,8 ; +416,3] contre politique + juge |
 | Recherche, 256 contre 64 simulations (juge 4 mois, comme la suite) | 10,98 % à 64 | **+415,6** [+368,2 ; +477,1] |
 | Recherche, 1024 contre 256 simulations | 6,90 contre 9,50 % (1 000 positions) | **+326,4** [+278,6 ; +386,5] |
-| Recherche, 4096 contre 1024 simulations | 4,75 contre 4,75 % (400 positions) | rien de mesurable : c'est désormais le juge qui limite |
+| Recherche, 4096 contre 1024 simulations | 4,75 contre 4,75 % (400 positions) | rien de mesurable à 5 coups par nœud (voir la largeur plus bas) |
+| Juge v3 : v2 entraîné 2 époques de plus sur les mêmes 4 mois | 13,02 % | **+16,7** [+2,7 ; +30,8] avec recherche (2 000 parties) ; +20,7 [+7,3 ; +34,1] sans |
+| Juge v4 : v3 + 1 époque sur 6 mois (639,6 M évaluations) | 13,02 % | **+16,3** [+2,7 ; +30,1] contre v3, avec recherche |
+| Largeur de l'arbre : 12 coups par nœud au lieu de 5, à 1024 simulations | 5,20 contre 6,70 % (1 000 positions) | **+111,4** [+71,6 ; +154,2] |
+| Juge v5 : v4 affiné sur les positions que visite la recherche (590 000 feuilles + les parties du bot, Stockfish 100 000 nœuds) | 13,24 % | +6,6 [−7,1 ; +20,3], non significatif (résultat négatif) |
 | Distillation : apprendre à la politique le choix de la recherche, en une passe | −0,1 à −1,2 point | rien de mesurable (résultat négatif) |
 
 Sur Lichess (`philidor-142M`) :
@@ -765,6 +798,8 @@ Sur Lichess (`philidor-142M`) :
 | 9 août | politique seule | 1646 | 1671 | 1702 | |
 | 30 sept. | recherche + graphes CUDA | 2020 | 1975 | 1996 | 1930 |
 | 5 oct. | idem | 2082 | 2103 | 2137 | 2041 |
+| 8 oct. | juge v4 | 2090 | 2131 | 2188 | 2100 |
+| 26 oct. | juge v4, largeur 12 | 2119 | 2100 | 2278 | 2169 |
 
 ### Reproduire
 
@@ -808,6 +843,12 @@ python -m juge_recherche.extraire_eval --mois 2026-05      # par mois, depuis da
 python -m juge_recherche.valeur_encoder --src data/eval_pgn/eval_2026-05.jsonl --out data/valeur
 python -m juge_recherche.valeur_train --data data/valeur --epoques 1     # → checkpoints/valeur.pt
 python -m juge_recherche.valeur_pertes                     # profil de pertes face aux autres sélecteurs (utilise l'étape 2)
+# v2 sur 4 mois (2026-04 à 07), puis v3 et v4, chacun repartant du précédent
+python -m juge_recherche.valeur_train --data data/valeur_4m --init checkpoints/valeur_v2.pt --epoques 2 \
+  --lr 5e-5 --lr-min-frac 0.1 --seed 99 --out checkpoints/valeur_v3.pt
+python -m juge_recherche.valeur_encoder --src data/eval_pgn/eval_2026-0{4,5,6,7,8,9}.jsonl --out data/valeur_6m
+python -m juge_recherche.valeur_train --data data/valeur_6m --init checkpoints/valeur_v3.pt --epoques 1 \
+  --lr 5e-5 --lr-min-frac 0.1 --seed 7 --out checkpoints/valeur_v4.pt
 ```
 
 Une passe sur une partie donne au juge une cible par coup (le modèle est causal), environ 70 cibles par séquence. L'encodeur exclut toute partie qui passe par une position de mesure ou par l'un de ses coups candidats : faire l'étape 1 d'abord.
@@ -817,9 +858,12 @@ Une passe sur une partie donne au juge une cible par coup (le modèle est causal
 ```bash
 python -m juge_recherche.recherche_verrou --jeu propres --configs "64:0.1:0.0:5,64:0.5:0.0:5,64:1.0:0.0:5"
 python -m juge_recherche.recherche_verrou --jeu diag --controle --configs "16:0.1:0.0:5,64:0.1:0.0:5,256:0.1:0.0:5"
+# largeur de l'arbre à 1024 simulations, choix enregistrés pour une comparaison appariée
+python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
+  --configs "1024:0.1:0.0:5,1024:0.1:0.0:8,1024:0.1:0.0:12" --out results/largeur.json
 ```
 
-Une config s'écrit `simulations:cpuct:fpu:k`. `--controle` vérifie qu'une recherche à 6 simulations redonne exactement le choix du juge seul (bugs de signe ou de chemin).
+Une config s'écrit `simulations:cpuct:fpu:k`, où `k` est le nombre de coups gardés à chaque nœud. À 5, la recherche ne voyait jamais une réfutation hors du top-5 de l'adversaire ; 12 ne coûte rien de plus (même nombre de simulations) et explique probablement pourquoi 4096 simulations n'apportaient rien à 5. `--controle` vérifie qu'une recherche à 6 simulations redonne exactement le choix du juge seul (bugs de signe ou de chemin).
 
 **5. Duels**
 
@@ -837,12 +881,25 @@ Toutes les parties avancent ensemble, et chaque joueur calcule son coup pour tou
 **6. Le bot**
 
 ```bash
-VALEUR=checkpoints/valeur.pt RECHERCHE=1024 ./run_lichess_bot.sh
+VALEUR=checkpoints/valeur_v4.pt RECHERCHE=1024 RECHERCHE_K=12 ./run_lichess_bot.sh
 ```
 
-Sans le fichier du juge, le bot reste la politique seule. Avec lui, le serveur choisit le nombre de simulations à chaque coup (`juge_recherche/budget_pendule.py`) : environ 80 % de la pendule, l'effort au milieu de partie (là où le juge corrige l'intuition deux fois plus souvent que dans l'ouverture), jusqu'à une seule passe quand le temps manque. Une recherche longue cède la place si une autre partie attend plus que sa patience. Les graphes CUDA divisent le coût par deux : 1024 simulations en environ 3 s sur une RTX 3060. Le plafond se change sans redémarrer, dans `logs/sims_max.txt`.
+Sans le fichier du juge, le bot reste la politique seule. Avec lui, le serveur choisit le nombre de simulations à chaque coup (`juge_recherche/budget_pendule.py`) : environ 80 % de la pendule, l'effort au milieu de partie (là où le juge corrige l'intuition deux fois plus souvent que dans l'ouverture), jusqu'à une seule passe quand le temps manque : toujours sous 10 s restantes, et sous 20 s au plus 16 simulations, l'incrément étant gardé pour faire remonter la pendule (le dépenser là a coûté 9 % des parties du bot, perdues au temps). Le serveur journalise chaque coup (`[coup]` : pendule, simulations, attente, calcul), ce qui a permis de mesurer le vrai surcoût : 62 ms par coup en médiane. Une recherche longue cède la place si une autre partie attend plus que sa patience. Les graphes CUDA divisent le coût par deux : 1024 simulations en environ 3 s sur une RTX 3060. Le plafond se change sans redémarrer, dans `logs/sims_max.txt`.
 
-**7. Distillation (résultat négatif)**
+**7. Juge v5 : apprendre sur les positions de la recherche (résultat négatif)**
+
+```bash
+python -m juge_recherche.generer_feuilles --games 1000 --sims 64 --taux 0.15 --valeur checkpoints/valeur_v4.pt --out data/v5/feuilles.jsonl
+python -m juge_recherche.etiqueter_positions --in data/v5/feuilles.jsonl --mode feuille --out data/v5/feuilles_notees.jsonl
+python -m juge_recherche.etiqueter_positions --pgn-dir logs/lichess_games --mode partie --out data/v5/parties_bot.jsonl
+head -n 50000 data/eval_pgn/eval_2026-09.jsonl > data/v5/humain_50k.jsonl      # pour ne pas oublier
+python -m juge_recherche.valeur_encoder --src data/v5/humain_50k.jsonl data/v5/parties_bot.jsonl data/v5/feuilles_notees.jsonl --out data/v5/encode
+python -m juge_recherche.valeur_train --data data/v5/encode --init checkpoints/valeur_v4.pt --lr 3e-5 --lr-min-frac 0.1 --epoques 1 --seed 5 --out checkpoints/valeur_v5.pt
+```
+
+Le juge a appris sur des parties humaines, alors que la recherche l'interroge sur des positions imaginées plusieurs coups à l'avance. Noter ces positions avec Stockfish et affiner le juge dessus n'a rien changé de mesurable. Non testé : Stockfish à 100 000 nœuds note moins finement que les analyses de Lichess, il n'y a que 4,7 M cibles (dont 75 % humaines), et les feuilles viennent de recherches à 64 simulations alors que le bot en fait 1024.
+
+**8. Distillation (résultat négatif)**
 
 ```bash
 python -m juge_recherche.iteration_etiqueter    # cibles : le choix politique + juge, 6,26 M positions
@@ -896,6 +953,7 @@ Apprendre à la politique, en une passe, ce que le juge ou la recherche choisira
 | `recherche.py`, `recherche_verrou.py`, `engine_recherche.py` | Recherche PUCT, son verrou hors ligne, son moteur |
 | `graphes.py`, `budget_pendule.py` | Graphes CUDA ; le budget par coup selon la pendule |
 | `duel_lot.py`, `engine_sfselect.py` | Duels en lot à ouvertures appariées ; Stockfish choisit dans le top-k (plafond) |
+| `generer_feuilles.py`, `etiqueter_positions.py` | Juge v5 : les positions que visite la recherche, notées par Stockfish (résultat négatif) |
 | `iteration_*.py` | Distillation du juge ou de la recherche dans la politique (résultat négatif) |
 
 ### Graphiques

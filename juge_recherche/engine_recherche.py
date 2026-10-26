@@ -20,10 +20,13 @@ from juge_recherche.recherche import Recherche, chercher
 class RechercheEngine(ValeurEngine):
     def __init__(self, ckpt_path, vocab_path, device="cuda:0", temperature=0.0,
                  sims=64, cpuct=0.1, fpu=0.0, k=5, lot=8, alpha=0.25,
-                 valeur_path="checkpoints/valeur.pt", graphes=False, lot_auto=False):
+                 valeur_path="checkpoints/valeur.pt", graphes=False, lot_auto=False, k_recherche=None):
         super().__init__(ckpt_path, vocab_path, device, temperature, k=k, alpha=alpha,
                          valeur_path=valeur_path)
         self.sims, self.cpuct, self.fpu, self.lot = sims, cpuct, fpu, lot
+        # largeur de l'arbre (coups examinés par position) ; self.k reste celle du
+        # juge seul (sims = 0), qu'on ne change pas sans l'avoir mesurée
+        self.k_recherche = k_recherche or k
         self.pad = json.load(open(vocab_path))["pad_id"]
         self.derniere = None
         self.arret = None     # le serveur y branche « une autre partie attend »
@@ -43,7 +46,7 @@ class RechercheEngine(ValeurEngine):
         if len(legaux) == 1:
             return legaux[0]
         r = Recherche(board, [self.bos] + list(self.history), self.stoi,
-                      k=self.k, cpuct=self.cpuct, fpu=self.fpu, ctx=self.block_size)
+                      k=self.k_recherche, cpuct=self.cpuct, fpu=self.fpu, ctx=self.block_size)
         lot = (8 if self.sims <= 64 else 16 if self.sims <= 256 else 32) if self.lot_auto else self.lot
         chercher([r], self.model, self.valeur, self.sims, self.pad, self.device, lot=lot,
                  arret=self.arret, evaluateur=self.evaluateur)

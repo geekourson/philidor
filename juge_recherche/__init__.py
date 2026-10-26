@@ -21,6 +21,7 @@ Dans l'ordre de l'article :
                       engine_valeur
     recherche         recherche, recherche_verrou, engine_recherche, graphes,
                       budget_pendule
+    juge v5           generer_feuilles, etiqueter_positions (résultat négatif)
     duels             duel_lot (ouvertures appariées, parties en lot)
     distillation      iteration_etiqueter, iteration_recherche, iteration_train
                       (résultat négatif, publié comme tel)

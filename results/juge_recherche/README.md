@@ -22,3 +22,9 @@ Chaque mesure citée dans la section *De 1700 à 2000* du README, telle qu'écri
 | `diag_1024.json`, `diag_1024_lot32.json` | 256 vs 1024 simulations on 1,000 positions, and batches of 32 · 256 contre 1024, et lots de 32 | 9.50 / 6.90 %, 8.20 % |
 | `lot_1024_256.json` | Search 1024 vs 256 simulations · Recherche 1024 contre 256 | +326.4 |
 | `diag_4096.json` | 1024 vs 4096 simulations on 400 positions, move by move · 1024 contre 4096, position par position | 4.75 / 4.75 % |
+| `lot_v3_v2_valeur.json` | Judge v3 vs v2, policy + judge without search, 2,000 games · Juge v3 contre v2, sans recherche | +20.7 |
+| `lot_v3_v2_recherche.json`, `lot_v3_v2_recherche_b.json` | Judge v3 vs v2, search 64, 2 × 1,000 games (seeds 1234, 4321) · Juge v3 contre v2, recherche 64 | +16.0 / +17.4, cumulated +16.7 [+2.7 ; +30.8] |
+| `lot_v4_v3.json` | Judge v4 (6 months) vs v3, search 64 · Juge v4 contre v3 | +16.3 |
+| `largeur.json` | Tree width k 5 / 8 / 12 at 1024 simulations, 1,000 positions, choices per position · Largeur de l'arbre | 6.70 / 5.30 / 5.20 % |
+| `lot_k12_k5.json` | Search 1024, 12 vs 5 moves per node · Recherche 1024, 12 contre 5 coups par nœud | +111.4 |
+| `lot_v5_v4.json` | Judge v5 (search leaves + bot games) vs v4, search 64 · Juge v5 contre v4 | +6.6, not significant |

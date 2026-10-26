@@ -24,7 +24,11 @@ Le nombre de simulations se déduit du temps visé :
 # 16 sim. 0,17 s ; 64 : 0,33 s ; 256 : 0,88 s ; 1024 : 3,12 s.
 COUT_FIXE = 0.14      # s
 COUT_SIM = 0.0029     # s par simulation
-LATENCE = 0.1         # s par coup : réseau, lichess-bot (Lichess en compense une partie)
+LATENCE = 0.5         # s par coup : réseau, lichess-bot, attente derrière les autres parties
+                      # (0,1 au départ : 36 défaites au temps sur 400 parties, toutes avec
+                      # incrément ; le surcoût mesuré ensuite est bien plus faible, 0,5 est prudent)
+URGENCE_S = 10.0      # sous ce temps restant : une passe, toujours
+PRUDENCE_S = 20.0     # sous ce temps : 16 simulations au plus, incrément non dépensé
 ECHELLE = 1.0         # calibré par simulation : ~80 % a 45 coups, jamais au temps a 120
 PLANCHER = 20         # coups restants estimés, jamais moins
 RESERVE_COUPS = 40    # on garde toujours de quoi jouer 40 coups en une passe
@@ -58,7 +62,8 @@ def temps_vise(t_ms, inc_ms, ply):
     """Secondes visées pour ce coup (avant partage entre parties simultanées)."""
     t, inc = t_ms / 1000, (inc_ms or 0) / 1000
     reserve = (0.03 + LATENCE) * RESERVE_COUPS
-    return max(0.0, t - reserve) / coups_restants(ply) * poids(ply) * ECHELLE + 0.8 * inc - LATENCE
+    inc_utile = 0.0 if t < PRUDENCE_S else 0.8 * inc     # pendule basse : l'incrément sert à remonter
+    return max(0.0, t - reserve) / coups_restants(ply) * poids(ply) * ECHELLE + inc_utile - LATENCE
 
 
 def patience(t_ms, inc_ms, ply):
@@ -74,7 +79,10 @@ def simulations(t_ms, inc_ms, ply, sims_max, en_cours=1):
     """t_ms : temps restant du camp au trait (None = sans pendule)."""
     if t_ms is None:
         return sims_max
-    return depuis_temps(temps_vise(t_ms, inc_ms, ply) / max(1, en_cours), sims_max)
+    if t_ms / 1000 < URGENCE_S:
+        return -1
+    s = depuis_temps(temps_vise(t_ms, inc_ms, ply) / max(1, en_cours), sims_max)
+    return min(s, 16) if t_ms / 1000 < PRUDENCE_S else s
 
 
 def palier(alloue_ms, sims_max):
