@@ -60,10 +60,10 @@ def valeur_terminale(b):
 
 
 class Recherche:
-    def __init__(self, board, ids, stoi, k=5, cpuct=2.0, fpu=0.1, ctx=256):
+    def __init__(self, board, ids, stoi, k=5, cpuct=2.0, fpu=0.1, ctx=256, racine=None):
         self.board0, self.ids0, self.stoi = board, list(ids), stoi
         self.k, self.cpuct, self.fpu, self.ctx = k, cpuct, fpu, ctx
-        self.racine = Noeud(None, None, 1.0)
+        self.racine = racine if racine is not None else Noeud(None, None, 1.0)   # racine : arbre repris
         self.racine.terminal = False
         self.faites = 0
 
@@ -117,6 +117,21 @@ class Recherche:
     def choix(self):
         cs = self.racine.enfants
         return max(cs, key=lambda c: (c.n, c.w / c.n if c.n else -1)).coup
+
+
+def sous_arbre(ancienne, toks):
+    """Le nœud atteint depuis la racine d'une recherche précédente en jouant `toks`
+    (en pratique : notre coup puis celui de l'adversaire), s'il est déjà développé.
+    Ses visites sont gardées : la nouvelle recherche part de là au lieu de zéro.
+    Mêmes jetons, même historique : les valeurs restent valables telles quelles."""
+    nd = ancienne.racine
+    for t in toks:
+        if nd.enfants is None:
+            return None
+        nd = next((c for c in nd.enfants if c.tok == t), None)
+        if nd is None:
+            return None
+    return nd if nd.enfants is not None and nd.terminal is False else None
 
 
 def tronc(gpt, x):

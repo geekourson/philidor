@@ -11,16 +11,18 @@ serveur d'inférence règle `sims` à chaque coup selon la pendule
 (budget_pendule.py).
 """
 import json
+from collections import OrderedDict
 import chess
 from engine import ChessEngine
 from juge_recherche.engine_valeur import ValeurEngine
-from juge_recherche.recherche import Recherche, chercher
+from juge_recherche.recherche import Recherche, chercher, sous_arbre
 
 
 class RechercheEngine(ValeurEngine):
     def __init__(self, ckpt_path, vocab_path, device="cuda:0", temperature=0.0,
                  sims=64, cpuct=0.1, fpu=0.0, k=5, lot=8, alpha=0.25,
-                 valeur_path="checkpoints/valeur.pt", graphes=False, lot_auto=False, k_recherche=None):
+                 valeur_path="checkpoints/valeur.pt", graphes=False, lot_auto=False, k_recherche=None,
+                 reprise=False):
         super().__init__(ckpt_path, vocab_path, device, temperature, k=k, alpha=alpha,
                          valeur_path=valeur_path)
         self.sims, self.cpuct, self.fpu, self.lot = sims, cpuct, fpu, lot
@@ -29,6 +31,10 @@ class RechercheEngine(ValeurEngine):
         self.k_recherche = k_recherche or k
         self.pad = json.load(open(vocab_path))["pad_id"]
         self.derniere = None
+        # reprise : on garde l'arbre de chaque partie et on repart, au coup suivant,
+        # du nœud atteint par notre coup et la réponse de l'adversaire
+        self.reprise = reprise
+        self.arbres = OrderedDict()    # historique (jetons) -> recherche ; plusieurs parties à la fois
         self.arret = None     # le serveur y branche « une autre partie attend »
         self.lot_auto = lot_auto   # lot 8 / 16 / 32 selon le nombre de simulations
         self.evaluateur = None
@@ -45,10 +51,18 @@ class RechercheEngine(ValeurEngine):
         legaux = list(board.legal_moves)
         if len(legaux) == 1:
             return legaux[0]
+        racine = None
+        if self.reprise:
+            ancienne = self.arbres.pop(tuple(self.history[:-2]), None)
+            racine = sous_arbre(ancienne, self.history[-2:]) if ancienne is not None else None
         r = Recherche(board, [self.bos] + list(self.history), self.stoi,
-                      k=self.k_recherche, cpuct=self.cpuct, fpu=self.fpu, ctx=self.block_size)
+                      k=self.k_recherche, cpuct=self.cpuct, fpu=self.fpu, ctx=self.block_size, racine=racine)
         lot = (8 if self.sims <= 64 else 16 if self.sims <= 256 else 32) if self.lot_auto else self.lot
         chercher([r], self.model, self.valeur, self.sims, self.pad, self.device, lot=lot,
                  arret=self.arret, evaluateur=self.evaluateur)
         self.derniere = r
+        if self.reprise:
+            self.arbres[tuple(self.history)] = r
+            while len(self.arbres) > 32:           # parties abandonnées ou terminées
+                self.arbres.popitem(last=False)
         return r.choix()

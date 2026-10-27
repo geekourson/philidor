@@ -287,6 +287,8 @@ Every duel uses paired openings (each random opening is played twice, colours sw
 | Judge v3: v2 trained 2 more epochs on the same 4 months | 13.02 % | **+16.7** [+2.7 ; +30.8] with search (2,000 games); +20.7 [+7.3 ; +34.1] without |
 | Judge v4: v3 + 1 epoch on 6 months (639.6 M evaluations) | 13.02 % | **+16.3** [+2.7 ; +30.1] vs v3, with search |
 | Tree width: 12 moves per node instead of 5, at 1024 simulations | 5.20 vs 6.70 % (1,000 positions) | **+111.4** [+71.6 ; +154.2] |
+| Search, 2048 / 4096 vs 1024 simulations, at width 12 | 5.00 / 4.00 vs 5.20 % (1,000 positions, paired z = 0.58 / 2.68) | duel pending |
+| Tree reuse: each move starts from the previous move's subtree (our move, then the reply), at 256 simulations | | **+122.0** [+91.4 ; +154.7]; tree reused in 98 % of searches |
 | Judge v5: v4 fine-tuned on the positions the search visits (590k leaves + the bot's games, Stockfish 100k nodes) | 13.24 % | +6.6 [−7.1 ; +20.3], not significant (negative result) |
 | Distillation: teaching the policy the search's choice, in one pass | −0.1 to −1.2 point | nothing measurable (negative result) |
 
@@ -299,6 +301,7 @@ On Lichess (`philidor-142M`):
 | 5 Oct | same | 2082 | 2103 | 2137 | 2041 |
 | 8 Oct | judge v4 | 2090 | 2131 | 2188 | 2100 |
 | 26 Oct | judge v4, tree width 12 | 2119 | 2100 | 2278 | 2169 |
+| 27 Oct | + tree reuse | 2132 | 2135 | 2300 | 2193 |
 
 ### Reproducing it
 
@@ -360,9 +363,11 @@ python -m juge_recherche.recherche_verrou --jeu diag --controle --configs "16:0.
 # tree width at 1024 simulations, choices saved for a paired comparison
 python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
   --configs "1024:0.1:0.0:5,1024:0.1:0.0:8,1024:0.1:0.0:12" --out results/largeur.json
+python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
+  --configs "2048:0.1:0.0:12,4096:0.1:0.0:12" --out results/profondeur12.json
 ```
 
-A config is `simulations:cpuct:fpu:k`, where `k` is the number of moves kept at every node. With 5, the search never saw a refutation outside the opponent's top 5; 12 costs nothing more (same number of simulations) and is probably why 4096 simulations brought nothing at 5. `--controle` checks that a 6-simulation search reproduces the judge's own choice exactly (sign and path bugs).
+A config is `simulations:cpuct:fpu:k`, where `k` is the number of moves kept at every node. With 5, the search never saw a refutation outside the opponent's top 5; 12 costs nothing more (same number of simulations), and at 12, 4096 simulations pay again offline (4.00 % against 5.20 % at 1024), which they did not at 5. `cpuct` 0.1 remains the best setting at width 12 (7.00 % on the bot's positions, against 7.70 % at 0.05 and 7.50 % at 0.2). `--controle` checks that a 6-simulation search reproduces the judge's own choice exactly (sign and path bugs).
 
 **5. Duels**
 
@@ -373,6 +378,8 @@ python -m juge_recherche.duel_lot --a recherche:256:0.1:0.0:5 --b recherche:64:0
 python -m juge_recherche.duel_lot --a juge:5:0.5 --b base --games 2000 --out results/judge_v1.json
 python -m juge_recherche.duel_lot --a sfsel:5:4 --b base --games 2000 --out results/ceiling_depth4.json
 python -m juge_recherche.duel_lot --a recherche:64:0.1:0.0:5 --b recherche:64:0.1:0.0:5 --games 100 --out results/clone.json
+python -m juge_recherche.duel_lot --a recherche:256:0.1:0.0:12:r --b recherche:256:0.1:0.0:12 --valeur-a checkpoints/valeur_v4.pt \
+  --valeur-b checkpoints/valeur_v4.pt --games 400 --out results/tree_reuse.json      # :r = reuse the previous move's tree
 ```
 
 All games advance together and each player computes its move for every game where it is to move, in GPU batches: 400 games in under two minutes for the policy + judge engine. Because batch composition changes the bf16 rounding, a batched clone control is centred on 0.500 without being exactly 0.500 (it is exact one game at a time).
@@ -380,10 +387,10 @@ All games advance together and each player computes its move for every game wher
 **6. The bot**
 
 ```bash
-VALEUR=checkpoints/valeur_v4.pt RECHERCHE=1024 RECHERCHE_K=12 ./run_lichess_bot.sh
+VALEUR=checkpoints/valeur_v4.pt RECHERCHE=1024 RECHERCHE_K=12 REPRISE=1 ./run_lichess_bot.sh
 ```
 
-Without the judge file, the bot stays the policy alone. With it, the server picks the number of simulations at every move (`juge_recherche/budget_pendule.py`): about 80 % of the clock, the effort in the middlegame (where the judge corrects the intuition twice as often as in the opening), down to a single pass when time runs out: always under 10 s left, and under 20 s at most 16 simulations, with the increment kept to rebuild the clock (spending it there lost 9 % of the bot's games on time). The server logs every move (`[coup]`: clock, simulations, wait, compute), which is how the real overhead was measured: 62 ms per move at the median. A long search gives way if another game has been waiting longer than its patience. CUDA graphs halve the cost: 1024 simulations in about 3 s on an RTX 3060. The cap can be changed without restarting, in `logs/sims_max.txt`.
+Without the judge file, the bot stays the policy alone. With it, the server picks the number of simulations at every move (`juge_recherche/budget_pendule.py`): about 80 % of the clock, the effort in the middlegame (where the judge corrects the intuition twice as often as in the opening), down to a single pass when time runs out: always under 10 s left, and under 20 s at most 16 simulations, with the increment kept to rebuild the clock (spending it there lost 9 % of the bot's games on time). The server logs every move (`[coup]`: clock, simulations, wait, compute), which is how the real overhead was measured: 62 ms per move at the median. With `REPRISE=1`, each game keeps its tree and the next search starts from the branch our move and the opponent's reply lead to, with its visits: the new simulations come on top. A long search gives way if another game has been waiting longer than its patience. CUDA graphs halve the cost: 1024 simulations in about 3 s on an RTX 3060. The cap can be changed without restarting, in `logs/sims_max.txt`.
 
 **7. Judge v5: training on the search's own positions (negative result)**
 
@@ -788,6 +795,8 @@ Chaque duel utilise des ouvertures appariées (chaque ouverture aléatoire est j
 | Juge v3 : v2 entraîné 2 époques de plus sur les mêmes 4 mois | 13,02 % | **+16,7** [+2,7 ; +30,8] avec recherche (2 000 parties) ; +20,7 [+7,3 ; +34,1] sans |
 | Juge v4 : v3 + 1 époque sur 6 mois (639,6 M évaluations) | 13,02 % | **+16,3** [+2,7 ; +30,1] contre v3, avec recherche |
 | Largeur de l'arbre : 12 coups par nœud au lieu de 5, à 1024 simulations | 5,20 contre 6,70 % (1 000 positions) | **+111,4** [+71,6 ; +154,2] |
+| Recherche, 2048 / 4096 contre 1024 simulations, à largeur 12 | 5,00 / 4,00 contre 5,20 % (1 000 positions, z apparié = 0,58 / 2,68) | duel à venir |
+| Reprise de l'arbre : chaque coup repart du sous-arbre du coup précédent (notre coup, puis la réponse), à 256 simulations | | **+122,0** [+91,4 ; +154,7] ; arbre repris dans 98 % des recherches |
 | Juge v5 : v4 affiné sur les positions que visite la recherche (590 000 feuilles + les parties du bot, Stockfish 100 000 nœuds) | 13,24 % | +6,6 [−7,1 ; +20,3], non significatif (résultat négatif) |
 | Distillation : apprendre à la politique le choix de la recherche, en une passe | −0,1 à −1,2 point | rien de mesurable (résultat négatif) |
 
@@ -800,6 +809,7 @@ Sur Lichess (`philidor-142M`) :
 | 5 oct. | idem | 2082 | 2103 | 2137 | 2041 |
 | 8 oct. | juge v4 | 2090 | 2131 | 2188 | 2100 |
 | 26 oct. | juge v4, largeur 12 | 2119 | 2100 | 2278 | 2169 |
+| 27 oct. | + reprise de l'arbre | 2132 | 2135 | 2300 | 2193 |
 
 ### Reproduire
 
@@ -861,9 +871,11 @@ python -m juge_recherche.recherche_verrou --jeu diag --controle --configs "16:0.
 # largeur de l'arbre à 1024 simulations, choix enregistrés pour une comparaison appariée
 python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
   --configs "1024:0.1:0.0:5,1024:0.1:0.0:8,1024:0.1:0.0:12" --out results/largeur.json
+python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
+  --configs "2048:0.1:0.0:12,4096:0.1:0.0:12" --out results/profondeur12.json
 ```
 
-Une config s'écrit `simulations:cpuct:fpu:k`, où `k` est le nombre de coups gardés à chaque nœud. À 5, la recherche ne voyait jamais une réfutation hors du top-5 de l'adversaire ; 12 ne coûte rien de plus (même nombre de simulations) et explique probablement pourquoi 4096 simulations n'apportaient rien à 5. `--controle` vérifie qu'une recherche à 6 simulations redonne exactement le choix du juge seul (bugs de signe ou de chemin).
+Une config s'écrit `simulations:cpuct:fpu:k`, où `k` est le nombre de coups gardés à chaque nœud. À 5, la recherche ne voyait jamais une réfutation hors du top-5 de l'adversaire ; 12 ne coûte rien de plus (même nombre de simulations), et à 12, 4096 simulations paient de nouveau hors ligne (4,00 % contre 5,20 % à 1024), ce qu'elles ne faisaient pas à 5. `cpuct` 0,1 reste le meilleur réglage à largeur 12 (7,00 % sur les positions du bot, contre 7,70 % à 0,05 et 7,50 % à 0,2). `--controle` vérifie qu'une recherche à 6 simulations redonne exactement le choix du juge seul (bugs de signe ou de chemin).
 
 **5. Duels**
 
@@ -874,6 +886,8 @@ python -m juge_recherche.duel_lot --a recherche:256:0.1:0.0:5 --b recherche:64:0
 python -m juge_recherche.duel_lot --a juge:5:0.5 --b base --games 2000 --out results/juge_v1.json
 python -m juge_recherche.duel_lot --a sfsel:5:4 --b base --games 2000 --out results/plafond_p4.json
 python -m juge_recherche.duel_lot --a recherche:64:0.1:0.0:5 --b recherche:64:0.1:0.0:5 --games 100 --out results/clone.json
+python -m juge_recherche.duel_lot --a recherche:256:0.1:0.0:12:r --b recherche:256:0.1:0.0:12 --valeur-a checkpoints/valeur_v4.pt \
+  --valeur-b checkpoints/valeur_v4.pt --games 400 --out results/reprise.json      # :r = reprendre l'arbre du coup précédent
 ```
 
 Toutes les parties avancent ensemble, et chaque joueur calcule son coup pour toutes les parties où il a le trait, en lots sur le GPU : 400 parties en moins de deux minutes pour le moteur politique + juge. La composition des lots changeant l'arrondi bf16, un témoin clone en lot est centré sur 0,500 sans valoir exactement 0,500 (il l'est une partie à la fois).
@@ -881,10 +895,10 @@ Toutes les parties avancent ensemble, et chaque joueur calcule son coup pour tou
 **6. Le bot**
 
 ```bash
-VALEUR=checkpoints/valeur_v4.pt RECHERCHE=1024 RECHERCHE_K=12 ./run_lichess_bot.sh
+VALEUR=checkpoints/valeur_v4.pt RECHERCHE=1024 RECHERCHE_K=12 REPRISE=1 ./run_lichess_bot.sh
 ```
 
-Sans le fichier du juge, le bot reste la politique seule. Avec lui, le serveur choisit le nombre de simulations à chaque coup (`juge_recherche/budget_pendule.py`) : environ 80 % de la pendule, l'effort au milieu de partie (là où le juge corrige l'intuition deux fois plus souvent que dans l'ouverture), jusqu'à une seule passe quand le temps manque : toujours sous 10 s restantes, et sous 20 s au plus 16 simulations, l'incrément étant gardé pour faire remonter la pendule (le dépenser là a coûté 9 % des parties du bot, perdues au temps). Le serveur journalise chaque coup (`[coup]` : pendule, simulations, attente, calcul), ce qui a permis de mesurer le vrai surcoût : 62 ms par coup en médiane. Une recherche longue cède la place si une autre partie attend plus que sa patience. Les graphes CUDA divisent le coût par deux : 1024 simulations en environ 3 s sur une RTX 3060. Le plafond se change sans redémarrer, dans `logs/sims_max.txt`.
+Sans le fichier du juge, le bot reste la politique seule. Avec lui, le serveur choisit le nombre de simulations à chaque coup (`juge_recherche/budget_pendule.py`) : environ 80 % de la pendule, l'effort au milieu de partie (là où le juge corrige l'intuition deux fois plus souvent que dans l'ouverture), jusqu'à une seule passe quand le temps manque : toujours sous 10 s restantes, et sous 20 s au plus 16 simulations, l'incrément étant gardé pour faire remonter la pendule (le dépenser là a coûté 9 % des parties du bot, perdues au temps). Le serveur journalise chaque coup (`[coup]` : pendule, simulations, attente, calcul), ce qui a permis de mesurer le vrai surcoût : 62 ms par coup en médiane. Avec `REPRISE=1`, chaque partie garde son arbre et la recherche suivante repart de la branche où mènent notre coup et la réponse de l'adversaire, avec ses visites : les nouvelles simulations s'y ajoutent. Une recherche longue cède la place si une autre partie attend plus que sa patience. Les graphes CUDA divisent le coût par deux : 1024 simulations en environ 3 s sur une RTX 3060. Le plafond se change sans redémarrer, dans `logs/sims_max.txt`.
 
 **7. Juge v5 : apprendre sur les positions de la recherche (résultat négatif)**
 

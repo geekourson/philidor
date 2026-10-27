@@ -25,8 +25,10 @@ Trois moteurs, du plus simple au plus fort :
 Avec la recherche, le nombre de simulations est réglé à chaque coup sur la
 pendule, le moment de la partie et les parties simultanées
 (juge_recherche/budget_pendule.py), jusqu'à une seule passe quand le temps
-manque. Le plafond N peut être changé sans redémarrer : il est relu à chaque
-coup dans le fichier $PHILIDOR_SIMS_MAX (défaut logs/sims_max.txt). Une
+manque. Avec --reprise, chaque partie repart de son arbre du coup précédent
+(la branche « notre coup + réponse »). Le plafond N peut être changé sans
+redémarrer : il est relu à chaque coup dans le fichier $PHILIDOR_SIMS_MAX
+(défaut logs/sims_max.txt). Une
 recherche longue s'interrompt si une autre partie attend plus que sa patience.
 
 Protocole, une ligne JSON par sens :
@@ -150,6 +152,7 @@ def main():
     p.add_argument("--cpuct", type=float, default=0.1)
     p.add_argument("--graphes", action="store_true", help="graphes CUDA pour la recherche (graphes.py)")
     p.add_argument("--k-recherche", type=int, default=0, help="largeur de l'arbre (0 = --k)")
+    p.add_argument("--reprise", action="store_true", help="reprendre l'arbre du coup précédent")
     args = p.parse_args()
 
     ready = args.socket + ".ready"
@@ -162,7 +165,7 @@ def main():
         eng = RechercheEngine(args.ckpt, args.vocab, args.device, args.temperature,
                               sims=args.recherche, cpuct=args.cpuct, fpu=0.0, k=args.k,
                               alpha=args.alpha, valeur_path=args.valeur, graphes=args.graphes,
-                              k_recherche=args.k_recherche or None)
+                              k_recherche=args.k_recherche or None, reprise=args.reprise)
         if args.graphes:
             # capture de tous les graphes avant d'annoncer le serveur pret
             import time as _t
@@ -172,7 +175,7 @@ def main():
             print(f"[moteur] graphes CUDA : {len(eng.evaluateur.graphes)} captures en {_t.time()-t0:.1f} s", flush=True)
         print(f"[moteur] recherche : jusqu'a {args.recherche} simulations selon la pendule, "
               f"cpuct {args.cpuct}, top-{eng.k_recherche} ; sans recherche : top-{args.k}, alpha {args.alpha}, "
-              f"{args.valeur}", flush=True)
+              f"{args.valeur}{', arbre repris' if args.reprise else ''}", flush=True)
     elif args.valeur:
         from juge_recherche.engine_valeur import ValeurEngine
         eng = ValeurEngine(args.ckpt, args.vocab, args.device, args.temperature,

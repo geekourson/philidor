@@ -28,3 +28,6 @@ Chaque mesure citée dans la section *De 1700 à 2000* du README, telle qu'écri
 | `largeur.json` | Tree width k 5 / 8 / 12 at 1024 simulations, 1,000 positions, choices per position · Largeur de l'arbre | 6.70 / 5.30 / 5.20 % |
 | `lot_k12_k5.json` | Search 1024, 12 vs 5 moves per node · Recherche 1024, 12 contre 5 coups par nœud | +111.4 |
 | `lot_v5_v4.json` | Judge v5 (search leaves + bot games) vs v4, search 64 · Juge v5 contre v4 | +6.6, not significant |
+| `profondeur12.json` | 2048 and 4096 simulations at width 12, 1,000 positions, choices per position · 2048 et 4096 simulations à largeur 12 | 5.00 / 4.00 % (1024: 5.20 %) |
+| `cpuct12.json` | cpuct 0.05 / 0.1 / 0.2 at 1024 simulations, width 12, bot's positions · Réglage de cpuct | 7.70 / 7.00 / 7.50 % |
+| `lot_reprise.json` | Search 256, width 12, with vs without tree reuse, 400 games · Avec contre sans reprise de l'arbre | +122.0 |

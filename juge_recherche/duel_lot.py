@@ -16,6 +16,7 @@ Joueurs :
     valeur:k:alpha               top-k de la politique, argmax(note + alpha log p)
                                  (juge v2 : copie complète affinée, valeur_train.py)
     recherche:sims:cpuct:fpu:k   recherche PUCT (recherche.py)
+    recherche:sims:cpuct:fpu:k:r la même, en reprenant l'arbre du coup précédent (sims en plus)
     juge:k:alpha                 juge v1 : petite tête sur le tronc gelé (engine_juge.py)
     sfsel:k:profondeur           Stockfish choisit dans le top-k du modèle (mesure du
                                  plafond, engine_sfselect.py ; Stockfish ne joue pas
@@ -33,7 +34,7 @@ import torch
 import chess
 from model import ChessGPT, ModelConfig
 from juge_recherche.valeur_train import Valeur
-from juge_recherche.recherche import Recherche, chercher, tronc
+from juge_recherche.recherche import Recherche, chercher, tronc, sous_arbre
 from elo_match import tirer_ouverture, elo_with_error
 
 CACHE = {}
@@ -87,6 +88,9 @@ class Joueur:
             self.k, self.alpha = int(args[0]), float(args[1])
         if self.type == "recherche":
             self.sims, self.cpuct, self.fpu, self.k = int(args[0]), float(args[1]), float(args[2]), int(args[3])
+            self.reprise = len(args) > 4 and args[4] == "r"
+            self.arbres = {}          # historique -> recherche du coup précédent (reprise)
+            self.repris = [0, 0]      # arbres repris, recherches faites
 
     @torch.no_grad()
     def politique_lot(self, ids):
@@ -106,12 +110,20 @@ class Joueur:
                 coups.append(self.moteur.best_move(b))
             return coups
         if self.type == "recherche":
-            coups = []
+            coups, nouveaux = [], {}
             for i in range(0, len(boards), 128):
-                R = [Recherche(b, s, self.stoi, k=self.k, cpuct=self.cpuct, fpu=self.fpu, ctx=self.ctx)
-                     for b, s in zip(boards[i:i + 128], ids[i:i + 128])]
+                R = []
+                for b, s in zip(boards[i:i + 128], ids[i:i + 128]):
+                    ancienne = self.arbres.get(tuple(s[:-2])) if self.reprise else None
+                    racine = sous_arbre(ancienne, s[-2:]) if ancienne is not None else None
+                    self.repris[0] += racine is not None; self.repris[1] += 1
+                    R.append(Recherche(b, s, self.stoi, k=self.k, cpuct=self.cpuct, fpu=self.fpu, ctx=self.ctx,
+                                       racine=racine))
                 chercher(R, self.pol, self.val, self.sims, self.pad, self.dev, lot=8)
                 coups += [r.choix() for r in R]
+                nouveaux.update((tuple(s), r) for s, r in zip(ids[i:i + 128], R))
+            if self.reprise:
+                self.arbres = nouveaux     # on ne garde que le dernier coup de chaque partie
             return coups
         lg = self.politique_lot(ids)
         legaux = [list(b.legal_moves) for b in boards]
@@ -217,6 +229,7 @@ def main():
                "victoires": w, "nulles": d, "defaites": l, "score": (w + 0.5 * d) / n,
                "elo_diff": elo, "elo_ic95_bas": bas, "elo_ic95_haut": haut,
                "terminaisons": dict(Counter(g["fin"] for g in parties)),
+               "arbres_repris": {J.spec: J.repris for J in (JA, JB) if getattr(J, "reprise", False)},
                "demi_coups_moyens": float(np.mean([len(g["h"]) for g in parties])),
                "duree_s": round(time.time() - t0, 1)}
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)

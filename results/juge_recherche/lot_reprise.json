@@ -1,0 +1,41 @@
+{
+  "a": {
+    "label": "reprise",
+    "spec": "recherche:256:0.1:0.0:12:r",
+    "ckpt": "checkpoints/run2_best.pt",
+    "valeur": "checkpoints/valeur_v4.pt"
+  },
+  "b": {
+    "label": "sans reprise",
+    "spec": "recherche:256:0.1:0.0:12",
+    "ckpt": "checkpoints/run2_best.pt",
+    "valeur": "checkpoints/valeur_v4.pt"
+  },
+  "protocole": {
+    "parties": 400,
+    "ouvertures_appariees": true,
+    "demi_coups_aleatoires": 4,
+    "graine": 1234,
+    "en_lot": true
+  },
+  "victoires": 225,
+  "nulles": 85,
+  "defaites": 90,
+  "score": 0.66875,
+  "elo_diff": 122.0,
+  "elo_ic95_bas": 91.4,
+  "elo_ic95_haut": 154.7,
+  "terminaisons": {
+    "checkmate": 315,
+    "threefold_repetition": 68,
+    "insufficient_material": 17
+  },
+  "arbres_repris": {
+    "recherche:256:0.1:0.0:12:r": [
+      19989,
+      20394
+    ]
+  },
+  "demi_coups_moyens": 105.795,
+  "duree_s": 19248.1
+}

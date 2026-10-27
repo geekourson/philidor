@@ -40,6 +40,7 @@ DEVICE=cuda:0
 #   VALEUR      poids du juge (juge_recherche/valeur_train.py)
 #   RECHERCHE   plafond de simulations par coup (0 = juge sans recherche)
 #   RECHERCHE_K largeur de l'arbre, coups examinés par position (+111 Elo à 12 contre 5)
+#   REPRISE     1 = repartir de l'arbre du coup précédent (+122 Elo à 256 simulations)
 # Le budget par coup suit la pendule (juge_recherche/budget_pendule.py) ; le
 # plafond se change à chaud dans $LOGS/sims_max.txt, sans redémarrer.
 VALEUR="${VALEUR-$REPO/checkpoints/valeur.pt}"
@@ -47,6 +48,7 @@ VALEUR_K="${VALEUR_K:-5}"
 VALEUR_ALPHA="${VALEUR_ALPHA:-0.25}"
 RECHERCHE="${RECHERCHE:-1024}"
 RECHERCHE_K="${RECHERCHE_K:-12}"
+REPRISE="${REPRISE:-1}"
 export PHILIDOR_SIMS_MAX="${PHILIDOR_SIMS_MAX:-$LOGS/sims_max.txt}"
 RESTART_DELAY=120
 
@@ -86,6 +88,7 @@ demarrer_serveur() {
   if [ -n "$VALEUR" ] && [ -f "$VALEUR" ]; then
     extra=(--valeur "$VALEUR" --k "$VALEUR_K" --alpha "$VALEUR_ALPHA")
     [ "$RECHERCHE" -gt 0 ] && extra+=(--recherche "$RECHERCHE" --graphes --k-recherche "$RECHERCHE_K")
+  [ -n "$VALEUR" ] && [ "$RECHERCHE" -gt 0 ] && [ "$REPRISE" = "1" ] && extra+=(--reprise)
   fi
   ( cd "$REPO" && setsid "$PY" infer_server.py --ckpt "$CKPT" --vocab "$VOCAB" \
       --device "$DEVICE" --socket "$SOCK" "${extra[@]}" >> "$SRV_LOG" 2>&1 ) &
