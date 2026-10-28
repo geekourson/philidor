@@ -95,6 +95,7 @@ class Handler(socketserver.StreamRequestHandler):
                             eng.sims = sims
                         eng.set_position(board, moves)
                         mv = eng.best_move(board)
+                        herite = getattr(eng, "herite", 0)
                 finally:
                     with self.server.compteur:
                         self.server.en_cours -= 1
@@ -102,7 +103,7 @@ class Handler(socketserver.StreamRequestHandler):
                 t_fin = time.time()
                 # une ligne par coup : mesurer le vrai coût (calcul, attente derrière les autres parties)
                 print(f"[coup] ply {len(moves)} pendule {req.get('wtime' if board.turn == chess.WHITE else 'btime')} "
-                      f"inc {req.get('winc' if board.turn == chess.WHITE else 'binc')} sims {sims} "
+                      f"inc {req.get('winc' if board.turn == chess.WHITE else 'binc')} sims {sims} herite {herite} "
                       f"attente {1000*(t_verrou-t_arrivee):.0f} ms calcul {1000*(t_fin-t_verrou):.0f} ms",
                       flush=True)
                 resp = {"move": mv.uci()}

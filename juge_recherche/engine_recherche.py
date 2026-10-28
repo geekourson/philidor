@@ -44,6 +44,7 @@ class RechercheEngine(ValeurEngine):
                                          tailles_lot=(8, 16, 32) if lot_auto else (lot,))
 
     def best_move(self, board: chess.Board) -> chess.Move:
+        self.herite = 0                       # visites reprises du coup précédent (journal)
         if self.sims < 0:                     # pendule presque vide : une passe, l'intuition seule
             return ChessEngine.best_move(self, board)
         if self.sims == 0:                    # deux passes : politique + juge
@@ -55,6 +56,7 @@ class RechercheEngine(ValeurEngine):
         if self.reprise:
             ancienne = self.arbres.pop(tuple(self.history[:-2]), None)
             racine = sous_arbre(ancienne, self.history[-2:]) if ancienne is not None else None
+            self.herite = racine.n if racine is not None else 0
         r = Recherche(board, [self.bos] + list(self.history), self.stoi,
                       k=self.k_recherche, cpuct=self.cpuct, fpu=self.fpu, ctx=self.block_size, racine=racine)
         lot = (8 if self.sims <= 64 else 16 if self.sims <= 256 else 32) if self.lot_auto else self.lot

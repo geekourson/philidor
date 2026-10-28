@@ -31,3 +31,4 @@ Chaque mesure citée dans la section *De 1700 à 2000* du README, telle qu'écri
 | `profondeur12.json` | 2048 and 4096 simulations at width 12, 1,000 positions, choices per position · 2048 et 4096 simulations à largeur 12 | 5.00 / 4.00 % (1024: 5.20 %) |
 | `cpuct12.json` | cpuct 0.05 / 0.1 / 0.2 at 1024 simulations, width 12, bot's positions · Réglage de cpuct | 7.70 / 7.00 / 7.50 % |
 | `lot_reprise.json` | Search 256, width 12, with vs without tree reuse, 400 games · Avec contre sans reprise de l'arbre | +122.0 |
+| `lot_4096_1024_k12.json` | Search 4096 vs 1024 simulations, width 12, 200 games · Recherche 4096 contre 1024, largeur 12 | +202.6 |

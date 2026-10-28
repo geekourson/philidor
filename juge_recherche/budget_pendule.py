@@ -23,7 +23,7 @@ Le nombre de simulations se déduit du temps visé :
 # Coûts mesurés sur la 3060 à côté du bot, graphes CUDA, lots de 8 (26/09 soir) :
 # 16 sim. 0,17 s ; 64 : 0,33 s ; 256 : 0,88 s ; 1024 : 3,12 s.
 COUT_FIXE = 0.14      # s
-COUT_SIM = 0.0029     # s par simulation
+COUT_SIM = 0.0035     # s par simulation (mesuré en partie : 3,2 à 4,2 ms)
 LATENCE = 0.5         # s par coup : réseau, lichess-bot, attente derrière les autres parties
                       # (0,1 au départ : 36 défaites au temps sur 400 parties, toutes avec
                       # incrément ; le surcoût mesuré ensuite est bien plus faible, 0,5 est prudent)
