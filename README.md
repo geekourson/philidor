@@ -288,6 +288,7 @@ Every duel uses paired openings (each random opening is played twice, colours sw
 | Judge v4: v3 + 1 epoch on 6 months (639.6 M evaluations) | 13.02 % | **+16.3** [+2.7 ; +30.1] vs v3, with search |
 | Tree width: 12 moves per node instead of 5, at 1024 simulations | 5.20 vs 6.70 % (1,000 positions) | **+111.4** [+71.6 ; +154.2] |
 | Search, 2048 / 4096 vs 1024 simulations, at width 12 | 5.00 / 4.00 vs 5.20 % (1,000 positions, paired z = 0.58 / 2.68) | 4096 vs 1024: **+202.6** [+165.4 ; +244.6] (200 games) |
+| Search, 8192 vs 4096 simulations, at width 12 | 3.70 vs 4.00 % (1,000 positions, paired z = 1.34, 93 % identical choices) | not measurable, for twice the cost: the cap stays at 4096 |
 | Tree reuse: each move starts from the previous move's subtree (our move, then the reply), at 256 simulations | | **+122.0** [+91.4 ; +154.7]; tree reused in 98 % of searches |
 | Judge v5: v4 fine-tuned on the positions the search visits (590k leaves + the bot's games, Stockfish 100k nodes) | 13.24 % | +6.6 [−7.1 ; +20.3], not significant (negative result) |
 | Distillation: teaching the policy the search's choice, in one pass | −0.1 to −1.2 point | nothing measurable (negative result) |
@@ -365,9 +366,11 @@ python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoin
   --configs "1024:0.1:0.0:5,1024:0.1:0.0:8,1024:0.1:0.0:12" --out results/largeur.json
 python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
   --configs "2048:0.1:0.0:12,4096:0.1:0.0:12" --out results/profondeur12.json
+python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
+  --configs "8192:0.1:0.0:12" --out results/profondeur8192.json
 ```
 
-A config is `simulations:cpuct:fpu:k`, where `k` is the number of moves kept at every node. With 5, the search never saw a refutation outside the opponent's top 5; 12 costs nothing more (same number of simulations), and at 12, 4096 simulations pay again offline (4.00 % against 5.20 % at 1024), which they did not at 5. `cpuct` 0.1 remains the best setting at width 12 (7.00 % on the bot's positions, against 7.70 % at 0.05 and 7.50 % at 0.2). `--controle` checks that a 6-simulation search reproduces the judge's own choice exactly (sign and path bugs).
+A config is `simulations:cpuct:fpu:k`, where `k` is the number of moves kept at every node. With 5, the search never saw a refutation outside the opponent's top 5; 12 costs nothing more (same number of simulations), and at 12, 4096 simulations pay again offline (4.00 % against 5.20 % at 1024), which they did not at 5; 8192 no longer pay measurably (3.70 %, paired z = 1.34). `cpuct` 0.1 remains the best setting at width 12 (7.00 % on the bot's positions, against 7.70 % at 0.05 and 7.50 % at 0.2). `--controle` checks that a 6-simulation search reproduces the judge's own choice exactly (sign and path bugs).
 
 **5. Duels**
 
@@ -796,6 +799,7 @@ Chaque duel utilise des ouvertures appariées (chaque ouverture aléatoire est j
 | Juge v4 : v3 + 1 époque sur 6 mois (639,6 M évaluations) | 13,02 % | **+16,3** [+2,7 ; +30,1] contre v3, avec recherche |
 | Largeur de l'arbre : 12 coups par nœud au lieu de 5, à 1024 simulations | 5,20 contre 6,70 % (1 000 positions) | **+111,4** [+71,6 ; +154,2] |
 | Recherche, 2048 / 4096 contre 1024 simulations, à largeur 12 | 5,00 / 4,00 contre 5,20 % (1 000 positions, z apparié = 0,58 / 2,68) | 4096 contre 1024 : **+202,6** [+165,4 ; +244,6] (200 parties) |
+| Recherche, 8192 contre 4096 simulations, à largeur 12 | 3,70 contre 4,00 % (1 000 positions, z apparié = 1,34, 93 % de choix identiques) | rien de mesurable, pour un coût double : le plafond reste à 4096 |
 | Reprise de l'arbre : chaque coup repart du sous-arbre du coup précédent (notre coup, puis la réponse), à 256 simulations | | **+122,0** [+91,4 ; +154,7] ; arbre repris dans 98 % des recherches |
 | Juge v5 : v4 affiné sur les positions que visite la recherche (590 000 feuilles + les parties du bot, Stockfish 100 000 nœuds) | 13,24 % | +6,6 [−7,1 ; +20,3], non significatif (résultat négatif) |
 | Distillation : apprendre à la politique le choix de la recherche, en une passe | −0,1 à −1,2 point | rien de mesurable (résultat négatif) |
@@ -873,9 +877,11 @@ python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoin
   --configs "1024:0.1:0.0:5,1024:0.1:0.0:8,1024:0.1:0.0:12" --out results/largeur.json
 python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
   --configs "2048:0.1:0.0:12,4096:0.1:0.0:12" --out results/profondeur12.json
+python -m juge_recherche.recherche_verrou --jeu diag --n 1000 --valeur checkpoints/valeur_v4.pt \
+  --configs "8192:0.1:0.0:12" --out results/profondeur8192.json
 ```
 
-Une config s'écrit `simulations:cpuct:fpu:k`, où `k` est le nombre de coups gardés à chaque nœud. À 5, la recherche ne voyait jamais une réfutation hors du top-5 de l'adversaire ; 12 ne coûte rien de plus (même nombre de simulations), et à 12, 4096 simulations paient de nouveau hors ligne (4,00 % contre 5,20 % à 1024), ce qu'elles ne faisaient pas à 5. `cpuct` 0,1 reste le meilleur réglage à largeur 12 (7,00 % sur les positions du bot, contre 7,70 % à 0,05 et 7,50 % à 0,2). `--controle` vérifie qu'une recherche à 6 simulations redonne exactement le choix du juge seul (bugs de signe ou de chemin).
+Une config s'écrit `simulations:cpuct:fpu:k`, où `k` est le nombre de coups gardés à chaque nœud. À 5, la recherche ne voyait jamais une réfutation hors du top-5 de l'adversaire ; 12 ne coûte rien de plus (même nombre de simulations), et à 12, 4096 simulations paient de nouveau hors ligne (4,00 % contre 5,20 % à 1024), ce qu'elles ne faisaient pas à 5 ; 8192 ne paient plus de façon mesurable (3,70 %, z apparié = 1,34). `cpuct` 0,1 reste le meilleur réglage à largeur 12 (7,00 % sur les positions du bot, contre 7,70 % à 0,05 et 7,50 % à 0,2). `--controle` vérifie qu'une recherche à 6 simulations redonne exactement le choix du juge seul (bugs de signe ou de chemin).
 
 **5. Duels**
 
