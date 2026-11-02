@@ -38,6 +38,12 @@ def demander(moves, pendule=None, tentatives=40):
             s.settimeout(30)
             s.connect(SOCK)
             s.sendall((json.dumps({"moves": moves, **(pendule or {})}) + "\n").encode())
+            # Pas de délai sur la réponse : une recherche longue (4096 simulations, ou
+            # en file derrière une autre partie) dépasse 30 s. Renvoyer la demande
+            # relançait la recherche de zéro derrière la précédente, sans fin : 4 parties
+            # perdues au temps avec 5 à 12 min à la pendule. Si le serveur meurt, recv
+            # renvoie b"" et on réessaie.
+            s.settimeout(None)
             data = b""
             while not data.endswith(b"\n"):
                 chunk = s.recv(4096)
